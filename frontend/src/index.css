@@ -398,6 +398,17 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.voice-sentences {
+  margin: 4px 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
 .progress {
   height: 6px;
   border-radius: 3px;

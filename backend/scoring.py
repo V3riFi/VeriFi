@@ -19,10 +19,14 @@ MIN_STD = {
     # a tight floor made the dashboard flag normal variation as a reaction.
     "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 2.0, "blink_rate": 3.0, "lip_compression": 0.05,
     "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
-    # Voice: only present while the subject talks, so these get a baseline only if they
-    # speak during it. Drawn on the dashboard, not part of stress or spike yet.
+    # Voice: only present while the subject talks, so it gets its own baseline from the
+    # voice phase (subject reads VOICE_SENTENCES) instead of the silent one. Drawn on
+    # the dashboard, not part of stress or spike yet.
     "pitch": 5.0, "jitter": 0.2,
 }
+VOICE_KEYS = ("pitch", "jitter")
+SENSOR_KEYS = tuple(k for k in MIN_STD if k not in VOICE_KEYS)
+MIN_VOICE_SAMPLES = 20  # voiced samples needed for a voice baseline (~2 s of speech at 10 Hz)
 
 # spike = weighted mix of per-signal responses, weighted toward GSR.
 # Missing signals are skipped and the remaining weights rescaled.
@@ -112,19 +116,30 @@ def rolling_range(t: np.ndarray, x: np.ndarray, span_s: float) -> np.ndarray:
 class Baseline:
     """Mean and std per signal over the calm period at the start of a session."""
 
-    def __init__(self, samples: list[dict]) -> None:
+    def __init__(self, samples: list[dict], keys: tuple[str, ...] = SENSOR_KEYS) -> None:
         self.mean: dict[str, float] = {}
         self.std: dict[str, float] = {}
-        for key, min_std in MIN_STD.items():
-            x = column(samples, key)
-            x = x[~np.isnan(x)]
-            if len(x) >= 2:
-                self.mean[key] = float(x.mean())
-                self.std[key] = max(float(x.std()), min_std)
+        self.add(samples, keys)
         t = column(samples, "t")
         ranges = rolling_range(t, column(samples, "flex"), HOLD_RANGE_S)
         ranges = ranges[~np.isnan(ranges)]
         self.breath_range = float(np.median(ranges)) if len(ranges) else None
+
+    def add(self, samples: list[dict], keys: tuple[str, ...], min_count: int = 2) -> int:
+        """Adds (or replaces) these signals' mean and std from samples. Returns the fewest values any key had."""
+        fewest = len(samples)
+        for key in keys:
+            x = column(samples, key)
+            x = x[~np.isnan(x)]
+            fewest = min(fewest, len(x))
+            if len(x) >= max(min_count, 2):
+                self.mean[key] = float(x.mean())
+                self.std[key] = max(float(x.std()), MIN_STD[key])
+        return fewest
+
+    def add_voice(self, samples: list[dict]) -> int:
+        """Voice baseline from the voice phase. Returns how many voiced samples it had."""
+        return self.add(samples, VOICE_KEYS, MIN_VOICE_SAMPLES)
 
     def z(self, key: str, value: float) -> float:
         return (value - self.mean[key]) / self.std[key]

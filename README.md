@@ -8,7 +8,7 @@ It is not a truth machine. It shows *when* the subject reacted, *which* signals 
 
 ### How a session runs
 
-1. **Fit the sensors and start the session.** The subject sits calmly for about 60 seconds while VeriFi records their **baseline**.
+1. **Fit the sensors and start the session.** The subject sits calmly and silently for about 60 seconds while VeriFi records their **baseline**. Then the dashboard shows five neutral sentences, and the subject reads them aloud for about 25 seconds: the **voice baseline**.
 2. **Ask a question.** The interrogator clicks **Ask** in the dashboard (or presses the hardware button) at the moment the question starts. Optionally an object or image is shown with it.
 3. **The subject answers.** Short answers work best (see Limitations).
 4. **VeriFi scores the response window**, about 10 seconds from the question's start, and adds a marker to the timeline showing how big the spike was and which signals drove it.
@@ -216,6 +216,8 @@ Serial port names:
 {"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "pitch": 182.4, "jitter": 1.1, "shimmer": 6.3, "voice_db": 61.0, "stress": 41}
 {"type": "baseline", "t": 1180.0, "phase": "start", "duration": 60}
 {"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 451.2, "hr": 72.4}, "std": {"gsr": 3.1, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
+{"type": "voice_baseline", "t": 1240.0, "phase": "start", "duration": 25, "sentences": ["I am sitting in a chair right now.", "..."]}
+{"type": "voice_baseline", "t": 1265.0, "phase": "done", "voiced_samples": 140, "mean": {"gsr": 451.2, "pitch": 182.0}, "std": {"gsr": 3.1, "pitch": 9.0}, "alert_sd": 2, "stress_alert": 25}
 {"type": "question", "t": 1250.0, "label": "Q3", "phase": "start"}
 {"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"gsr": 2.4, "hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}}
 {"type": "summary",  "questions": [{"label": "Q3", "spike": 2.1}, {"label": "Q1", "spike": 0.4}]}
@@ -229,6 +231,7 @@ Serial port names:
   - `hr` changes in steps (the pulse module recalculates about every 4 s), not as a smooth line.
   - `temp` is in °C (read by the pulse sensor chip). `spo2` is blood oxygen in %.
 - `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between. `start` carries the baseline length in seconds. `done` carries each signal's baseline `mean` and `std`, plus `alert_sd` and `stress_alert`, which the dashboard uses to draw the baseline and normal range on every chart and turn the line red outside it.
+- `voice_baseline`: right after the baseline is `done`, the subject reads `sentences` aloud for `duration` seconds (`VERIFI_VOICE_BASELINE_S`, default 25, `0` to skip). `done` carries the full baseline again, now with `pitch` and `jitter`. Questions are refused until it's done. It's skipped (never sent) when the mic isn't working. If it hears too little speech, an `error` follows and voice has no normal range for that session. The silent baseline also measures the room's loudness; after it, `pitch`/`jitter`/`shimmer` only count when the voice is at least 6 dB louder than the room, so background talk is ignored.
 - `question`: the backend's timestamped echo of a question starting. The dashboard puts a marker on the timeline here.
 - `response`: sent about 10 s after a question starts. `spike` is the overall response in standard deviations above baseline. `signals` breaks it down per signal (in standard deviations, except `breath_hold_s` in seconds).
 - `summary`: sent on `stop`. Every question, highest spike first.

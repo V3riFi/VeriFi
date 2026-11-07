@@ -11,12 +11,30 @@ function useNow() {
   return now
 }
 
+function Countdown({ label, startT, endT, now }) {
+  const left = endT - now
+  const duration = endT - startT
+  const progress = duration > 0 ? Math.min(1, Math.max(0, 1 - left / duration)) : 1
+  return (
+    <>
+      <div
+        className="progress"
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+      >
+        <span style={{ width: `${progress * 100}%` }} />
+      </div>
+      <small>{left > 0 ? `${Math.ceil(left)} s left` : 'Finishing…'}</small>
+    </>
+  )
+}
+
 function ActiveSession({ session }) {
   const now = useNow()
-  const recordingBaseline = !session.baseline
-  const left = session.baselineEndT - now
-  const duration = session.baselineEndT - session.startT
-  const progress = duration > 0 ? Math.min(1, Math.max(0, 1 - left / duration)) : 1
+  const recordingVoice = session.baseline && session.voice && !session.voice.done
 
   return (
     <>
@@ -24,22 +42,25 @@ function ActiveSession({ session }) {
         <span className="session-name">{session.name}</span>
         <span className="session-clock">{formatDuration(now - session.startT)}</span>
       </div>
-      {recordingBaseline ? (
+      {!session.baseline ? (
         <div className="baseline-progress">
           <p>
             <strong>Recording baseline.</strong> Keep the subject still and quiet, and don't ask anything yet.
           </p>
-          <div
-            className="progress"
-            role="progressbar"
-            aria-label="Baseline recording"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(progress * 100)}
-          >
-            <span style={{ width: `${progress * 100}%` }} />
-          </div>
-          <small>{left > 0 ? `${Math.ceil(left)} s left` : 'Finishing…'}</small>
+          <Countdown label="Baseline recording" startT={session.startT} endT={session.baselineEndT} now={now} />
+        </div>
+      ) : recordingVoice ? (
+        <div className="baseline-progress">
+          <p>
+            <strong>Recording voice baseline.</strong> Have the subject read these aloud at a normal pace, then repeat
+            them until the bar fills.
+          </p>
+          <ol className="voice-sentences">
+            {session.voice.sentences.map((sentence) => (
+              <li key={sentence}>{sentence}</li>
+            ))}
+          </ol>
+          <Countdown label="Voice baseline recording" startT={session.voice.startT} endT={session.voice.endT} now={now} />
         </div>
       ) : (
         <AskQuestion count={session.questions.length} />
