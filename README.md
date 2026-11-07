@@ -2,15 +2,23 @@
 
 **natHacks 2026 · Security & Defense track**
 
-VeriFi is a multimodal recognition detector. It runs a **Concealed Information Test (CIT)**: the subject is shown several items (for example 5 cards) and answers "no" to every one. VeriFi measures the body's response to each item and flags the one that stands out against that person's own baseline.
+VeriFi is a multimodal **suspicion detector** for interrogations. An interrogator asks questions, and can also show objects or crime-scene images, while the suspect answers normally. VeriFi watches the subject's body the whole time and shows a live stress indicator, plus which signals spiked after each question, compared against that person's own calm baseline.
 
-It is not a truth machine. It shows *which* signals reacted and by how much, so a human makes the call.
+It is not a truth machine. It shows *when* the subject reacted, *which* signals reacted and by how much, so the interrogator makes the call.
+
+### How a session runs
+
+1. **Fit the sensors and start the session.** The subject sits calmly for about 60 seconds while VeriFi records their **baseline**.
+2. **Ask a question.** The interrogator clicks **Ask** in the dashboard (or presses the hardware button) at the moment the question starts. Optionally an object or image is shown with it.
+3. **The subject answers.** Short answers work best (see Limitations).
+4. **VeriFi scores the response window**, about 10 seconds from the question's start, and adds a marker to the timeline showing how big the spike was and which signals drove it.
+5. Repeat for each question. At the end, the dashboard shows every question ranked by response.
 
 ## Signals
 
 | Signal | Source | What we look at |
 |---|---|---|
-| Skin conductance | Grove GSR sensor | Sweat response in the seconds after each item |
+| Skin conductance | Grove GSR sensor | Sweat response in the seconds after each question |
 | Heart rate | Pulse / SpO2 sensor (finger) | Change from baseline |
 | Breathing | Flex sensor on a chest belt | Breathing rate, breath holding |
 | Face | Webcam + MediaPipe Face Landmarker | Blink rate (Eye Aspect Ratio), hand over face, lip compression |
@@ -21,11 +29,12 @@ It is not a truth machine. It shows *which* signals reacted and by how much, so 
 ```
 Sensors -> Arduino UNO --USB serial--> Python backend <-- webcam (OpenCV + MediaPipe)
                                             |
-                                            +-- per-person baseline + per-item scoring
+                                            +-- per-person baseline + per-question scoring
                                             |
                                         WebSocket
                                             |
-                                         Frontend (live charts, CIT screen, results)
+                                         Frontend (interrogator dashboard: live charts,
+                                                   stress indicator, question timeline)
 ```
 
 ## Tech stack
@@ -39,7 +48,7 @@ Everything runs locally on one laptop. No cloud, no database, no Docker.
 | Serial | `pyserial`, background thread |
 | Vision | `opencv-python` + `mediapipe` (Tasks API), background thread in the backend process |
 | Voice (cut for now, maybe Sunday) | `sounddevice` + `praat-parselmouth` |
-| Scoring | `numpy` (z-scores against each person's baseline, no model training) |
+| Scoring | `numpy` (z-scores against each person's baseline period, no model training) |
 | Storage | CSV files in `data/` |
 | Frontend | Vite + React, charts with uPlot or Chart.js |
 | Backend -> frontend | WebSocket at `ws://localhost:8000/ws`, JSON, about 20 updates/sec |
@@ -53,9 +62,9 @@ Two rules:
 
 ```
 firmware/verifi/verifi.ino   Arduino sketch, streams all sensors over serial (hardware team)
-backend/server.py            FastAPI app + /ws WebSocket, CIT session timing, CSV logging (entry point)
+backend/server.py            FastAPI app + /ws WebSocket, session + question timing, CSV logging (entry point)
 backend/serial_io.py         serial reader thread
-backend/scoring.py           CIT scoring
+backend/scoring.py           baseline, live stress indicator, per-question response scoring
 vision/face.py               webcam + MediaPipe face features, imported by the backend (CV group)
 vision/face_landmarker.task  model file, downloaded separately (gitignored)
 frontend/                    Vite + React dashboard (created with npm create vite, see below)
@@ -98,6 +107,7 @@ mediapipe==1.2.2
 numpy
 sounddevice
 praat-parselmouth
+matplotlib
 ```
 
 `mediapipe` is pinned because our vision code depends on the 1.x Tasks API. `uvicorn[standard]` (not plain `uvicorn`) is needed for WebSocket support.
@@ -171,34 +181,56 @@ Serial port names:
 
 `ws://localhost:8000/ws`, one JSON object per message. Every message has a `type`.
 
+**Frontend -> backend** (the interrogator's controls):
+
+```
+{"type": "start",    "subject": "subject04"}
+{"type": "question", "label": "Q3", "text": "Where were you on Tuesday night?", "stimulus": "knife.jpg"}
+{"type": "stop"}
+```
+
+- `start`: begins a session. The backend records the baseline first.
+- `question`: sent when the interrogator clicks **Ask**. `text` and `stimulus` are optional, and `stimulus` is the object or image shown (or `null`). A hardware button press (`EVT:BUTTON`) starts a question too, labelled automatically.
+- `stop`: ends the session.
+
 **Backend -> frontend:**
 
 ```
-{"type": "sample", "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "blink_rate": 18}
-{"type": "trial",  "t": 1240.0, "round": 1, "item": "knife", "phase": "start"}
-{"type": "trial",  "t": 1250.0, "round": 1, "item": "knife", "phase": "end"}
-{"type": "result", "scores": {"knife": 1.8, "rope": 0.2, "gun": -0.3, "bat": 0.1, "poison": -0.4}, "pick": "knife"}
+{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "blink_rate": 18, "stress": 41}
+{"type": "baseline", "t": 1180.0, "phase": "start"}
+{"type": "baseline", "t": 1240.0, "phase": "done"}
+{"type": "question", "t": 1250.0, "label": "Q3", "phase": "start"}
+{"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"gsr": 2.4, "hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}}
+{"type": "summary",  "questions": [{"label": "Q3", "spike": 2.1}, {"label": "Q1", "spike": 0.4}]}
 ```
 
-- `sample`: about 20 per second. `t` is laptop time in seconds (Unix time).
-- `trial`: sent when an item appears on screen (`start`) and when its window ends (`end`). The frontend shows `item` large while a trial is running.
-- `result`: sent once at the end of a session. One score per item, highest = `pick`.
+- `sample`: about 20 per second. `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
+- `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between.
+- `question`: the backend's timestamped echo of a question starting. The dashboard puts a marker on the timeline here.
+- `response`: sent about 10 s after a question starts. `spike` is the overall response in standard deviations above baseline. `signals` breaks it down per signal (in standard deviations, except `breath_hold_s` in seconds).
+- `summary`: sent on `stop`. Every question, highest spike first.
 
-**Frontend -> backend** (starts a CIT session):
+**Scoring definitions** (`backend/scoring.py`):
 
-```
-{"type": "start", "subject": "subject04", "truth": "knife"}
-```
-
-`truth` is only written to the session's CSV for measuring accuracy, never used for scoring. Leave it empty during the live demo.
+- **Baseline:** the ~60 s calm period at the start. Its mean and standard deviation per signal are the reference for everything after.
+- **Question response:** for each signal, the peak in the ~10 s window after the question starts minus the mean of the 2 s before it, divided by that signal's baseline standard deviation. `spike` combines these, weighted toward GSR.
+- **Live `stress`:** a smoothed combination of how far GSR and heart rate currently are above baseline, scaled to 0 to 100.
 
 **Rules:**
 
-- The backend owns all timing. The frontend only displays what it's told.
+- The backend owns all timing and timestamps. The frontend sends controls and displays what it's told.
 - Add fields freely. Don't rename or remove existing ones without telling everyone.
 - Unknown `type` values should be ignored, not crash the frontend.
 
-**What the backend sends right now:** fake `sample` messages only (`uvicorn backend.server:app --port 8000`). Fake `trial`/`result` messages for a session are coming next. Until then, the frontend can mock them locally to build the CIT and results screens.
+**Errors:** if a control message can't be run (for example `question` while the baseline is still recording), the backend replies to that client only with `{"type": "error", "message": "..."}`. Show it to the interrogator.
+
+**What the backend sends right now:** the full session flow above, on **fake** signals. The fake GSR, heart rate and breathing react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. For quicker testing, shorten the baseline:
+
+```
+VERIFI_BASELINE_S=10 uvicorn backend.server:app --port 8000
+```
+
+(Windows PowerShell: `$env:VERIFI_BASELINE_S=10` first, then the `uvicorn` command.)
 
 ## Wiring (Arduino UNO)
 
@@ -208,7 +240,7 @@ Serial port names:
 | Flex sensor (breathing belt) | 5V -> flex -> **A1** -> resistor -> GND (resistor about equal to the flex sensor's flat resistance) |
 | BioAMP EXG Pill (optional) | VCC -> 5V, GND -> GND, OUT -> A2 |
 | Pulse / SpO2 (MAX3010x) | SDA -> A4, SCL -> A5, plus power and GND (check the board's voltage marking) |
-| Answer button | D2 and GND (internal pullup, no resistor needed) |
+| Question button (interrogator) | D2 and GND (internal pullup, no resistor needed) |
 
 ## Serial protocol
 
@@ -218,7 +250,7 @@ Serial port names:
 |---|---|---|
 | Board -> laptop | `EVT:HELLO` | Board booted |
 | Board -> laptop | `EVT:DATA:<ms>,<gsr>,<flex>,<exg>,<ir>,<red>` | One sample of every sensor (~50 Hz). `ir`/`red` are `-1` if the pulse sensor isn't found |
-| Board -> laptop | `EVT:BUTTON` | Button pressed |
+| Board -> laptop | `EVT:BUTTON` | Interrogator's button pressed: starts a question |
 
 ## Team
 
@@ -233,6 +265,8 @@ Serial port names:
 
 ## Limitations
 
-- Physiological responses show **arousal and recognition, not lying**. Stress, surprise or a personal connection to an item can all cause a spike.
+- Physiological responses show **stress and arousal, not lying**. An innocent person can spike on an emotional or accusatory question, and a calm liar may not spike at all. VeriFi flags reactions for the interrogator to follow up on, never a verdict.
+- **Talking affects the signals.** Speaking changes breathing and nudges heart rate, so breathing data during an answer is unreliable. Short answers (yes/no or a few words) give cleaner results, and GSR, which lags a few seconds anyway, is the most trustworthy signal.
+- **Compare questions within one session, not across people.** Everything is relative to that person's own baseline.
 - Small number of test subjects, collected during a weekend hackathon.
 - Prototype only. Not for real investigations, hiring, or any decision about a person.
