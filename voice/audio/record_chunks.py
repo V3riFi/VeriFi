@@ -153,8 +153,32 @@ class ChunkRecorder:
     def wait(self, timeout=None):
         """Block until recording has been stopped (by stop() from another thread,
         a callback, or a signal handler) and the combined file is written.
-        Returns True if finished, False if `timeout` seconds passed first."""
-        return self._done.wait(timeout)
+        Returns True if finished, False if `timeout` seconds passed first.
+
+        Ctrl+C while waiting stops the recording cleanly (chunks are merged)
+        instead of raising KeyboardInterrupt."""
+        try:
+            return self._done.wait(timeout)
+        except KeyboardInterrupt:
+            self.stop()
+            return True
+
+    def record(self, duration=None):
+        """Start recording and BLOCK until it is finished, then return the
+        combined file's path.
+
+        duration=None -> record until you press Enter (or Ctrl+C)
+        duration=10   -> record for 10 seconds
+        """
+        self.start()
+        try:
+            if duration is not None:
+                self._done.wait(timeout=duration)
+            else:
+                input("Recording... press Enter to stop.\n")
+        except (KeyboardInterrupt, EOFError):
+            pass
+        return self.stop() or self.result
 
     def __enter__(self):
         self.start()
@@ -168,6 +192,7 @@ class ChunkRecorder:
     def _resolve_output(output):
         """If `output` is a folder (existing, or written with a trailing slash),
         put a timestamped .wav file inside it. Otherwise use it as the file path."""
+        output = os.fspath(output)  # accept str or pathlib.Path
         if os.path.isdir(output) or output.endswith(("/", os.sep)):
             os.makedirs(output, exist_ok=True)
             name = f"recording_{time.strftime('%Y%m%d_%H%M%S')}.wav"

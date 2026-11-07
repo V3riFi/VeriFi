@@ -8,6 +8,8 @@ Flow:
      as a JSON file in outputs/temp/.
   3. stop_recording() stops the recorder, which merges all chunks into one
      file, then analyzes the whole recording and saves one JSON in outputs/final/.
+
+Lines marked "FIX:" are the changes made to the previous version.
 """
 
 import parselmouth
@@ -71,9 +73,12 @@ def find_pauses(snd, min_pause=0.5, silence_db_below_max=25, min_pitch=100):
 def extract_features(audio_file):
     """Analyze one audio file and return a dict of voice features.
 
-    Whole-file features: pitch mean/min/max, mean intensity, jitter, shimmer, pauses.
+    Whole-file features: pitch mean/min/max, mean intensity, jitter, shimmer,
+    harmonicity (HNR), pauses.
     Also includes `data_points`: the same measures (except min/max) for each
     consecutive `datapoint_interval`-second window.
+    Unvoiced/silent stretches can give NaN for pitch, jitter, shimmer and HNR
+    (written to the JSON files as null). Returns None for audio too short to analyze.
     """
     sound = parselmouth.Sound(audio_file)
     if sound.duration < 0.05:
@@ -86,7 +91,7 @@ def extract_features(audio_file):
     pitch_mean = praat.call(pitch, "Get mean", 0, 0, "Hertz")
     pitch_min = praat.call(pitch, "Get minimum", 0, 0, "Hertz", "Parabolic")   # parabolic = interpolated, more precise
     pitch_max = praat.call(pitch, "Get maximum", 0, 0, "Hertz", "Parabolic")
-    intensity_mean = praat.call(intensity, "Get mean", 0, 0, "energy")         # "energy" = average on the power scale
+    intensity_mean = praat.call(intensity, "Get mean", 0, 0, "dB")             # average of the dB values
 
     # Mark each glottal pulse (one vocal-fold cycle). 75-500 Hz is the pitch search range.
     # Jitter and shimmer are computed from these pulses.
@@ -99,18 +104,32 @@ def extract_features(audio_file):
     # Same args as jitter plus max amplitude factor.
     shimmer = praat.call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
 
+    # Harmonicity (HNR): how "clean" the voice is, in dB (higher = less noise / breathiness).
+    # FIX: was "Get harmonicity (cc)", which isn't a Praat command. The Sound command is
+    # "To Harmonicity (cc)"; it creates a Harmonicity object that we then query below.
+    # Args: time step (s), minimum pitch (Hz), silence threshold, periods per window
+    harmonicity = praat.call(sound, "To Harmonicity (cc)", 0.01, 75, 0.1, 1.0)
+    hnr_mean = praat.call(harmonicity, "Get mean", 0.0, 0.0)
+
     # --- Per-window values ---
     data_points = []
 
-    # Only do this when the file holds at least two full windows
-    # NOTE: for a single 0.2 s chunk, floor(0.2 / 0.2) = 1, so no windows are produced
-    if math.floor(sound.duration / datapoint_interval) > 1:
-        for i in range(0, math.floor(sound.duration / datapoint_interval)):
+    # FIX: was `if floor(duration / interval) > 1`, which skipped files holding exactly one
+    # window (so every 0.2 s chunk got an empty data_points list). Now one full window is enough.
+    # The 1e-6 guards against float rounding (e.g. 59.9999999 instead of 60).
+    n_windows = math.floor(sound.duration / datapoint_interval + 1e-6)
+
+    if n_windows > 1:
+        for i in range(0, n_windows):
             # Window i covers [i * interval, (i + 1) * interval] seconds
-            pitch_point = praat.call(pitch, "Get mean", i * datapoint_interval, (i + 1) * datapoint_interval, "Hertz")
-            intensity_point = praat.call(intensity, "Get mean", i * datapoint_interval, (i + 1) * datapoint_interval, "energy")
-            jitter_point = praat.call(point_process, "Get jitter (local)", i * datapoint_interval, (i + 1) * datapoint_interval, 0.0001, 0.02, 1.3)
-            shimmer_point = praat.call([sound, point_process], "Get shimmer (local)", i * datapoint_interval, (i + 1) * datapoint_interval, 0.0001, 0.02, 1.3, 1.6)
+
+            interval_min = i * datapoint_interval
+            interval_max = (i + 1) * datapoint_interval
+            pitch_point = praat.call(pitch, "Get mean", interval_min, interval_max, "Hertz")
+            intensity_point = praat.call(intensity, "Get mean", interval_min, interval_max, "dB")
+            jitter_point = praat.call(point_process, "Get jitter (local)", interval_min, interval_max, 0.0001, 0.02, 1.3)
+            shimmer_point = praat.call([sound, point_process], "Get shimmer (local)", interval_min, interval_max, 0.0001, 0.02, 1.3, 1.6)
+            hnr_point = praat.call(harmonicity, "Get mean", interval_min, interval_max)
 
             data_points.append(
                 {
@@ -118,6 +137,7 @@ def extract_features(audio_file):
                     "intensity": intensity_point,
                     "jitter": jitter_point,
                     "shimmer": shimmer_point,
+                    "harmonicity": hnr_point
                 }
             )
 
@@ -131,6 +151,7 @@ def extract_features(audio_file):
         "intensity_mean": intensity_mean,
         "jitter": jitter,
         "shimmer": shimmer,
+        "harmonicity": hnr_mean,
         "data_points": data_points,
         "pauses": pauses,
     }
@@ -162,11 +183,15 @@ def analyze_chunks(path):
     """Callback for ChunkRecorder: runs once for each finished chunk.
 
     Analyzes the chunk at `path` and writes the features to
-    outputs/temp/<chunk name>.json (the outputs/temp folder must already exist).
+    outputs/temp/<chunk name>.json.
     """
     data = extract_features(path)
     if data is None:
         return
+
+    # Chunk files don't need per-window data points (the chunk-level values already
+    # cover the whole chunk), so leave them out. The final full-recording JSON keeps them.
+    data.pop("data_points", None)
 
     with open(cwd / "outputs" / "temp" / f"{Path(path).stem}.json", "w") as json_file:
         json.dump(_nan_to_none(data), json_file, indent=4)
@@ -176,9 +201,12 @@ def record(filename):
 
     `filename` is the name for the final merged recording (without extension).
     """
-    # Clear leftover per-chunk JSON files from the previous session
+    # FIX: create the output folders if they don't exist yet (the code below and
+    # stop_recording() both fail without them)
     (cwd / "outputs" / "temp").mkdir(parents=True, exist_ok=True)
     (cwd / "outputs" / "final").mkdir(parents=True, exist_ok=True)
+
+    # Clear leftover per-chunk JSON files from the previous session
     for file_path in (cwd / "outputs" / "temp").iterdir():
         if file_path.is_file():
             file_path.unlink()
@@ -198,7 +226,10 @@ def record(filename):
 def stop_recording(rec):
     """Stop recording, analyze the merged file, save the results, return the JSON path."""
     path = rec.stop()   # stops the mic, merges the chunks, returns the merged file's path
+
+    # FIX: stop() returns None if nothing was recorded; bail out instead of crashing
     if path is None:
+        print("Nothing was recorded.")
         return None
 
     features_list = extract_features(path)   # analyze the complete recording
