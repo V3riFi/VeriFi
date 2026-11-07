@@ -73,15 +73,48 @@ def parse_line(raw: str) -> dict | None:
     }
 
 
+# USB vendor IDs of Arduino boards and of the USB-serial chips that clone boards use.
+# These are built into the hardware, so they work whatever name the OS gives the port.
+ARDUINO_VIDS = {
+    0x2341: "Arduino",
+    0x2A03: "Arduino",
+    0x1A86: "CH340/CH9102 (clone board)",
+    0x0403: "FTDI",
+    0x10C4: "CP210x",
+}
+# Fallback: words in the port's name or description. "usb serial device" is how
+# Windows 10/11 often lists an Uno.
+NAME_HINTS = (
+    "arduino", "usbmodem", "usbserial", "usb serial", "usb-serial",
+    "ttyacm", "ttyusb", "ch340", "ch910", "wch", "cp210", "ftdi",
+)
+
+
+def describe_port(p) -> str:
+    vid = f" vid={p.vid:04x}" if p.vid is not None else ""
+    return f"{p.device} ({p.description}{vid})"
+
+
 def find_port() -> str | None:
-    """VERIFI_PORT if set, otherwise the first port that looks like an Arduino."""
+    """VERIFI_PORT if set, otherwise the port that looks most like an Arduino.
+
+    In order: a known Arduino/USB-serial vendor ID, then a known name, then the
+    only USB serial port if there is exactly one (Bluetooth and built-in ports
+    have no USB vendor ID, so they never count).
+    """
     if os.environ.get("VERIFI_PORT"):
         return os.environ["VERIFI_PORT"]
-    hints = ("arduino", "usbmodem", "usbserial", "ttyacm", "ttyusb", "ch340", "wch")
-    for p in list_ports.comports():
-        text = f"{p.device} {p.description} {p.manufacturer or ''}".lower()
-        if any(h in text for h in hints):
+    ports = sorted(list_ports.comports(), key=lambda p: p.device)
+    for p in ports:
+        if p.vid in ARDUINO_VIDS:
             return p.device
+    for p in ports:
+        text = f"{p.device} {p.description} {p.manufacturer or ''}".lower()
+        if any(h in text for h in NAME_HINTS):
+            return p.device
+    usb = [p for p in ports if p.vid is not None]
+    if len(usb) == 1:
+        return usb[0].device
     return None
 
 
@@ -120,7 +153,8 @@ class SerialReader(threading.Thread):
             self.port = find_port()
             if not self.port:
                 if not warned:
-                    print("serial: no Arduino found. Plug it in, or set VERIFI_PORT. Retrying...", flush=True)
+                    seen = ", ".join(describe_port(p) for p in list_ports.comports()) or "none"
+                    print(f"serial: no Arduino found (ports seen: {seen}). Plug it in, or set VERIFI_PORT. Retrying...", flush=True)
                     warned = True
                 self.stopped.wait(RECONNECT_S)
                 continue

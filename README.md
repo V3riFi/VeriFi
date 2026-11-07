@@ -143,7 +143,7 @@ From the repo root (not from inside `backend/`), with the venv active.
 uvicorn backend.server:app --port 8000
 ```
 
-The terminal prints `serial: connected to ...` when it finds the board. If it picks the wrong port, set it yourself: `VERIFI_PORT=/dev/cu.usbmodem1101 uvicorn backend.server:app --port 8000`.
+The backend finds the board by itself, including after you plug it in or move it to another USB port: it looks for an Arduino (or CH340, FTDI or CP210x clone) USB vendor ID first, then the port name. The terminal prints `serial: connected to ...` when it finds it, or lists the ports it can see if it can't. If it picks the wrong port, set it yourself: `VERIFI_PORT=/dev/cu.usbmodem1101 uvicorn backend.server:app --port 8000`.
 
 **Without hardware** (fake signals, for frontend work):
 
