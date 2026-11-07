@@ -12,7 +12,10 @@ Real serial/vision data replaces FakeSignals later.
 
 Env variables:
   VERIFI_BASELINE_S  length of the baseline period in seconds (default 60; use 10 while testing)
+  VERIFI_CAMERA      webcam index (default 0), or "off" (see backend/camera.py)
 """
+
+from __future__ import annotations  # allows "str | None" hints on Python 3.9
 
 import asyncio
 import csv
@@ -30,8 +33,10 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend import scoring
+from backend.camera import SEND_FPS, Camera
 
 SAMPLE_HZ = 20
+STATUS_EVERY_S = 1.0
 BASELINE_S = float(os.environ.get("VERIFI_BASELINE_S", "60"))
 STRESS_SMOOTHING = 0.1  # 0-1, lower = smoother live stress
 DATA_DIR = Path("data")
@@ -168,7 +173,7 @@ class Session:
         if self.baseline is None and t >= self.baseline_end:
             self.baseline = scoring.Baseline([s for s in self.samples if s["t"] >= self.started])
             self.log.event(t, "baseline_done")
-            events.append({"type": "baseline", "t": round(t, 3), "phase": "done"})
+            events.append({"type": "baseline", "t": round(t, 3), "phase": "done", **self.baseline.as_message()})
 
         if self.baseline is not None:
             raw = scoring.stress(list(self.recent), self.baseline)
@@ -196,6 +201,38 @@ class Session:
 
 session: Session | None = None
 fake = FakeSignals()
+camera = Camera()
+
+
+def status_message() -> dict:
+    """What each part of the rig is doing, for the dashboard's navbar.
+
+    Values: "ok", "simulated" (FakeSignals stands in for it), "missing", "off".
+    Switch the simulated entries to real checks as serial_io and vision get wired in.
+    """
+    return {
+        "type": "status",
+        "components": {
+            "arduino": "simulated",
+            "gsr": "simulated",
+            "pulse": "simulated",
+            "breathing": "simulated",
+            "camera": camera.status,
+            "face": "simulated",  # blink_rate comes from FakeSignals until vision/face.py exists
+            "voice": "off",  # cut for now (README)
+        },
+        # Lets a dashboard that reloads mid-session pick the session back up.
+        "session": None if session is None else {
+            "subject": session.subject,
+            "started": round(session.started, 3),
+            "baseline_end": round(session.baseline_end, 3),
+            "baseline": session.baseline.as_message() if session.baseline else None,
+            "questions": [
+                {"label": q["label"], "t": round(q["t"], 3), "spike": q["spike"], "signals": q["signals"]}
+                for q in session.questions
+            ],
+        },
+    }
 
 
 # ----------------------------- Loop + WebSocket ----------------------------
@@ -223,11 +260,30 @@ async def sample_loop() -> None:
         await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
 
 
+async def status_loop() -> None:
+    while True:
+        await broadcast(status_message())
+        await asyncio.sleep(STATUS_EVERY_S)
+
+
+async def frame_loop() -> None:
+    last_sent = 0.0
+    while True:
+        await asyncio.sleep(1 / SEND_FPS)
+        frame = camera.latest()
+        if clients and frame and frame[0] > last_sent:
+            last_sent = frame[0]
+            await broadcast({"type": "frame", "t": round(frame[0], 3), "jpeg": frame[1]})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(sample_loop())
+    camera.start()
+    tasks = [asyncio.create_task(loop()) for loop in (sample_loop, status_loop, frame_loop)]
     yield
-    task.cancel()
+    for task in tasks:
+        task.cancel()
+    camera.stop()
     if session:
         session.log.close()
 
@@ -258,7 +314,7 @@ async def handle(message: dict) -> str | None:
         if session:
             return "A session is already running. Send stop first."
         session = Session(str(message.get("subject") or "subject"), now)
-        await broadcast({"type": "baseline", "t": round(now, 3), "phase": "start"})
+        await broadcast({"type": "baseline", "t": round(now, 3), "phase": "start", "duration": BASELINE_S})
 
     elif kind == "question":
         if not session:
@@ -286,6 +342,7 @@ async def handle(message: dict) -> str | None:
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     clients.add(ws)
+    await ws.send_text(json.dumps(status_message()))
     try:
         while True:
             text = await ws.receive_text()
