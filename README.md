@@ -46,7 +46,7 @@ requirements.txt             pinned Python packages
 ### Python (backend + vision)
 
 ```
-git clone https://github.com/CohenHodgson/VeriFi.git
+git clone https://github.com/V3riFi/VeriFi.git
 cd VeriFi
 python -m venv .venv
 ```
