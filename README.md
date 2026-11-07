@@ -65,6 +65,7 @@ firmware/verifi/sensors/     Arduino sketch (sensors.ino), streams all sensors o
 backend/server.py            FastAPI app + /ws WebSocket, session + question timing, CSV logging (entry point)
 backend/serial_io.py         serial reader thread
 backend/scoring.py           baseline, live stress indicator, per-question response scoring
+backend/camera.py            webcam capture thread, sends small JPEG frames to the dashboard
 vision/face.py               webcam + MediaPipe face features, imported by the backend (CV group)
 vision/face_landmarker.task  model file, downloaded separately (gitignored)
 frontend/                    Vite + React dashboard (created with npm create vite, see below)
@@ -213,27 +214,31 @@ Serial port names:
 
 ```
 {"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "stress": 41}
-{"type": "baseline", "t": 1180.0, "phase": "start"}
-{"type": "baseline", "t": 1240.0, "phase": "done"}
+{"type": "baseline", "t": 1180.0, "phase": "start", "duration": 60}
+{"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 451.2, "hr": 72.4}, "std": {"gsr": 3.1, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
 {"type": "question", "t": 1250.0, "label": "Q3", "phase": "start"}
 {"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"gsr": 2.4, "hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}}
 {"type": "summary",  "questions": [{"label": "Q3", "spike": 2.1}, {"label": "Q1", "spike": 0.4}]}
+{"type": "status",   "components": {"arduino": "ok", "gsr": "ok", "pulse": "missing", "breathing": "ok", "camera": "ok", "face": "ok", "voice": "off"}, "session": null}
+{"type": "frame",    "t": 1250.1, "jpeg": "<base64 JPEG>"}
 ```
 
 - `sample`: about 10 per second from the Arduino (20 with fake signals). `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
   - **Any signal can be `null` or missing**, so draw a gap instead of crashing. `hr`, `spo2` and `temp` are `null` for the first seconds until the pulse sensor locks on, `breath_rate` is `null` for the first ~15 s, and `blink_rate` is missing until vision is connected.
   - `hr` changes in steps (the pulse module recalculates about every 4 s), not as a smooth line.
   - `temp` is in °C (read by the pulse sensor chip). `spo2` is blood oxygen in %.
-- `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between.
+- `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between. `start` carries the baseline length in seconds. `done` carries each signal's baseline `mean` and `std`, plus `alert_sd` and `stress_alert`, which the dashboard uses to draw the baseline and normal range on every chart and turn the line red outside it.
 - `question`: the backend's timestamped echo of a question starting. The dashboard puts a marker on the timeline here.
 - `response`: sent about 10 s after a question starts. `spike` is the overall response in standard deviations above baseline. `signals` breaks it down per signal (in standard deviations, except `breath_hold_s` in seconds).
 - `summary`: sent on `stop`. Every question, highest spike first.
+- `status`: about once a second, and on connect. One entry per part of the rig: `ok`, `simulated` (fake data stands in for it), `missing` or `off`. The dashboard's navbar shows these. `session` describes the running session (or is `null`), so a dashboard that reloads mid-session can pick it back up.
+- `frame`: the webcam, about 10 per second, as a base64 JPEG about 480 px wide. Only sent when the camera works. Set `VERIFI_CAMERA=off` to disable video, or `VERIFI_CAMERA=1` to pick another camera. On a Mac, the terminal running the backend needs camera permission (System Settings > Privacy & Security > Camera).
 
 **Scoring definitions** (`backend/scoring.py`):
 
 - **Baseline:** the ~60 s calm period at the start. Its mean and standard deviation per signal are the reference for everything after.
 - **Question response:** for each signal, the peak in the ~10 s window after the question starts minus the mean of the 2 s before it, divided by that signal's baseline standard deviation. `spike` combines these, weighted toward GSR.
-- **Live `stress`:** a smoothed combination of how far GSR and heart rate currently are above baseline, scaled to 0 to 100.
+- **Live `stress`:** a smoothed, weighted combination of how far every signal currently is from baseline, scaled to 0 to 100. Weights favour GSR (0.45) and heart rate (0.25), then breathing rate, blink rate and lip compression. GSR and heart rate count only when above baseline; breathing and blink rate count a change either way. A signal that is an outlier right now counts for more: its weight is multiplied by its distance from baseline once that passes 1 SD. `stress_alert` (25) is the level that equals 2 SD.
 
 **Rules:**
 
@@ -243,7 +248,13 @@ Serial port names:
 
 **Errors:** if a control message can't be run (for example `question` while the baseline is still recording), the backend replies to that client only with `{"type": "error", "message": "..."}`. Show it to the interrogator.
 
-**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run). Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button.
+**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status` and real webcam `frame`s. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button. For quicker testing, shorten the baseline:
+
+```
+VERIFI_BASELINE_S=10 uvicorn backend.server:app --port 8000
+```
+
+(Windows PowerShell: `$env:VERIFI_BASELINE_S=10` first, then the `uvicorn` command.)
 
 ## Wiring (Arduino UNO)
 

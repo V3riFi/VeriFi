@@ -15,7 +15,10 @@ Env variables:
   VERIFI_FAKE        1 = fake signals instead of the Arduino
   VERIFI_PORT        serial port, if auto-detect picks the wrong one
   VERIFI_BASELINE_S  length of the baseline period in seconds (default 60; use 10 while testing)
+  VERIFI_CAMERA      webcam index (default 0), or "off" (see backend/camera.py)
 """
+
+from __future__ import annotations  # allows "str | None" hints on Python 3.9
 
 import asyncio
 import csv
@@ -33,10 +36,13 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend import scoring
+from backend.camera import SEND_FPS, Camera
 from backend.serial_io import SerialReader
 
 FAKE = os.environ.get("VERIFI_FAKE", "") not in ("", "0")
 SAMPLE_HZ = 20  # fake signals only; the Arduino sends at its own rate (10 Hz)
+STATUS_EVERY_S = 1.0
+SENSOR_STALE_S = 5.0  # a sensor with no value for this long shows as missing
 BASELINE_S = float(os.environ.get("VERIFI_BASELINE_S", "60"))
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
@@ -176,7 +182,7 @@ class Session:
         if self.baseline is None and t >= self.baseline_end:
             self.baseline = scoring.Baseline([s for s in self.samples if s["t"] >= self.started])
             self.log.event(t, "baseline_done")
-            events.append({"type": "baseline", "t": round(t, 3), "phase": "done"})
+            events.append({"type": "baseline", "t": round(t, 3), "phase": "done", **self.baseline.as_message()})
 
         if self.baseline is not None:
             raw = scoring.stress(list(self.recent), self.baseline)
@@ -204,6 +210,50 @@ class Session:
 
 session: Session | None = None
 fake = FakeSignals()
+camera = Camera()
+
+
+def sensor_status(*keys: str) -> str:
+    """"ok" if any of these sample fields had a value in the last SENSOR_STALE_S seconds."""
+    if FAKE:
+        return "simulated"
+    now = time.time()
+    return "ok" if any(now - last_seen.get(k, 0.0) < SENSOR_STALE_S for k in keys) else "missing"
+
+
+def status_message() -> dict:
+    """What each part of the rig is doing, for the dashboard's navbar.
+
+    Values: "ok", "simulated" (VERIFI_FAKE=1), "missing", "off".
+    """
+    if FAKE:
+        arduino = "simulated"
+    else:
+        arduino = "ok" if serial_reader and serial_reader.connected else "missing"
+    return {
+        "type": "status",
+        "components": {
+            "arduino": arduino,
+            "gsr": sensor_status("gsr"),
+            "pulse": sensor_status("hr", "spo2", "temp"),
+            "breathing": sensor_status("flex"),
+            "camera": camera.status,
+            # vision/face.py isn't connected yet; fake mode sends a fake blink_rate.
+            "face": "simulated" if FAKE else ("ok" if sensor_status("blink_rate") == "ok" else "off"),
+            "voice": "off",  # cut for now (README)
+        },
+        # Lets a dashboard that reloads mid-session pick the session back up.
+        "session": None if session is None else {
+            "subject": session.subject,
+            "started": round(session.started, 3),
+            "baseline_end": round(session.baseline_end, 3),
+            "baseline": session.baseline.as_message() if session.baseline else None,
+            "questions": [
+                {"label": q["label"], "t": round(q["t"], 3), "spike": q["spike"], "signals": q["signals"]}
+                for q in session.questions
+            ],
+        },
+    }
 
 
 # ----------------------------- Loop + WebSocket ----------------------------
@@ -220,6 +270,7 @@ async def broadcast(message: dict) -> None:
 
 breath_history: deque[tuple[float, float]] = deque()  # (t, flex) for breathing rate
 serial_reader: SerialReader | None = None
+last_seen: dict[str, float] = {}  # sample field -> laptop time it last had a value
 
 
 async def handle_sample(sample: dict) -> None:
@@ -230,6 +281,10 @@ async def handle_sample(sample: dict) -> None:
             breath_history.popleft()
         sample["breath_rate"] = scoring.breath_rate(list(breath_history), BREATH_WINDOW_S)
     sample["type"] = "sample"
+    now = time.time()
+    for key in ("gsr", "hr", "spo2", "temp", "flex", "blink_rate"):
+        if sample.get(key) is not None:
+            last_seen[key] = now
     events = session.on_sample(sample) if session else []
     await broadcast(sample)
     for event in events:
@@ -245,6 +300,22 @@ async def fake_loop() -> None:
         await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
 
 
+async def status_loop() -> None:
+    while True:
+        await broadcast(status_message())
+        await asyncio.sleep(STATUS_EVERY_S)
+
+
+async def frame_loop() -> None:
+    last_sent = 0.0
+    while True:
+        await asyncio.sleep(1 / SEND_FPS)
+        frame = camera.latest()
+        if clients and frame and frame[0] > last_sent:
+            last_sent = frame[0]
+            await broadcast({"type": "frame", "t": round(frame[0], 3), "jpeg": frame[1]})
+
+
 async def serial_loop(queue: asyncio.Queue) -> None:
     while True:
         await handle_sample(await queue.get())
@@ -253,9 +324,10 @@ async def serial_loop(queue: asyncio.Queue) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global serial_reader
+    camera.start()
     if FAKE:
         print("source: FAKE signals (VERIFI_FAKE=1)", flush=True)
-        task = asyncio.create_task(fake_loop())
+        source = asyncio.create_task(fake_loop())
     else:
         print("source: Arduino over serial (set VERIFI_FAKE=1 for fake signals)", flush=True)
         loop = asyncio.get_running_loop()
@@ -263,9 +335,12 @@ async def lifespan(app: FastAPI):
         # The reader runs in its own thread; hand each sample to the event loop safely.
         serial_reader = SerialReader(lambda s: loop.call_soon_threadsafe(queue.put_nowait, s))
         serial_reader.start()
-        task = asyncio.create_task(serial_loop(queue))
+        source = asyncio.create_task(serial_loop(queue))
+    tasks = [source, asyncio.create_task(status_loop()), asyncio.create_task(frame_loop())]
     yield
-    task.cancel()
+    for task in tasks:
+        task.cancel()
+    camera.stop()
     if serial_reader:
         serial_reader.stop()
     if session:
@@ -300,7 +375,7 @@ async def handle(message: dict) -> str | None:
         if session:
             return "A session is already running. Send stop first."
         session = Session(str(message.get("subject") or "subject"), now)
-        await broadcast({"type": "baseline", "t": round(now, 3), "phase": "start"})
+        await broadcast({"type": "baseline", "t": round(now, 3), "phase": "start", "duration": BASELINE_S})
 
     elif kind == "question":
         if not session:
@@ -329,6 +404,7 @@ async def handle(message: dict) -> str | None:
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     clients.add(ws)
+    await ws.send_text(json.dumps(status_message()))
     try:
         while True:
             text = await ws.receive_text()

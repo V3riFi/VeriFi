@@ -19,6 +19,8 @@ oxygen value; both are accepted. Lines starting with "STATUS:" are printed, not 
 Port: VERIFI_PORT env variable, or --port, or auto-detected.
 """
 
+from __future__ import annotations  # allows "dict | None" hints on Python 3.9
+
 import argparse
 import csv
 import os
