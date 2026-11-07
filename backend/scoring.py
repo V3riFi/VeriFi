@@ -14,7 +14,10 @@ WINDOW_S = 10.0   # response window after the question starts
 
 # Smallest standard deviation we trust per signal. Stops a very flat baseline
 # (or a sensor stuck on one value) from turning tiny wiggles into huge spikes.
-MIN_STD = {"gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 0.5, "blink_rate": 1.0, "lip_compression": 0.05}
+MIN_STD = {
+    "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 0.5, "blink_rate": 1.0, "lip_compression": 0.05,
+    "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
+}
 
 # spike = weighted mix of per-signal responses, weighted toward GSR.
 # Missing signals are skipped and the remaining weights rescaled.
@@ -41,6 +44,36 @@ STRESS_ALERT = round(ALERT_SD / STRESS_FULL_SCALE_SD * 100)
 HOLD_RANGE_S = 1.5
 HOLD_FRACTION = 0.3
 NORMAL_PAUSE_S = 1.0
+
+
+MIN_BREATH_WINDOW_S = 15.0  # need this much flex history before reporting a breathing rate
+MIN_BREATH_SWING = 2.0      # ADC units; smaller wiggles are noise, not breaths
+
+
+def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | None:
+    """Breaths per minute from (t, flex) pairs covering the last window_s seconds.
+
+    Removes slow drift (the belt shifting), then counts upward crossings with a
+    dead band so noise doesn't count as breaths. None until there's enough data
+    or if fewer than 2 breaths were seen (e.g. a long hold).
+    """
+    if len(history) < 10 or history[-1][0] - history[0][0] < MIN_BREATH_WINDOW_S:
+        return None
+    t = np.array([h[0] for h in history])
+    x = np.array([h[1] for h in history])
+    x = x - np.polyval(np.polyfit(t - t[0], x, 1), t - t[0])
+    band = max(0.3 * float(x.std()), MIN_BREATH_SWING)
+    rises, state = [], None
+    for ti, xi in zip(t, x):
+        if xi > band and state != "high":
+            if state == "low":
+                rises.append(ti)
+            state = "high"
+        elif xi < -band:
+            state = "low"
+    if len(rises) < 2:
+        return None
+    return round(float((len(rises) - 1) / (rises[-1] - rises[0]) * 60), 1)
 
 
 def column(samples: list[dict], key: str) -> np.ndarray:
