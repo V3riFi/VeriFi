@@ -22,6 +22,9 @@ export const SIGNALS = [
   { key: 'blink', field: 'blink_rate', label: 'Blink rate', unit: 'per min', direction: 'both', minSpan: 8, source: 'face' },
   { key: 'hand', field: 'hand_on_face', label: 'Hand on face', unit: '', direction: 'up', boolean: true, source: 'face' },
   { key: 'lip', field: 'lip_compression', label: 'Lip compression', unit: '', direction: 'up', minSpan: 0.4, source: 'face' },
+  // Voice values are null while the subject is quiet, so these charts only fill in during answers.
+  { key: 'pitch', field: 'pitch', label: 'Voice pitch', unit: 'Hz', direction: 'up', minSpan: 40, source: 'voice' },
+  { key: 'jitter', field: 'jitter', label: 'Voice jitter', unit: '%', direction: 'up', minSpan: 1, source: 'voice' },
 ]
 
 export const STRESS = { key: 'stress', field: 'stress', label: 'Combined stress', unit: '/ 100', direction: 'up' }

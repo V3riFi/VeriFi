@@ -16,6 +16,7 @@ Env variables:
   VERIFI_PORT        serial port, if auto-detect picks the wrong one
   VERIFI_BASELINE_S  length of the baseline period in seconds (default 60; use 10 while testing)
   VERIFI_CAMERA      webcam index (default 0), or "off" (see backend/camera.py)
+  VERIFI_VOICE       mic device index or name (default: system mic), or "off" (see voice/live.py)
 """
 
 from __future__ import annotations  # allows "str | None" hints on Python 3.9
@@ -38,6 +39,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from backend import scoring
 from backend.camera import SEND_FPS, Camera
 from backend.serial_io import SerialReader
+from voice.live import VoiceTracker
 
 FAKE = os.environ.get("VERIFI_FAKE", "") not in ("", "0")
 SAMPLE_HZ = 20  # fake signals only; the Arduino sends at its own rate (10 Hz)
@@ -47,7 +49,8 @@ BASELINE_S = float(os.environ.get("VERIFI_BASELINE_S", "60"))
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
-SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "temp", "spo2"]
+VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db"]
+SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "temp", "spo2", *VOICE_KEYS]
 
 clients: set[WebSocket] = set()
 
@@ -211,6 +214,7 @@ class Session:
 session: Session | None = None
 fake = FakeSignals()
 camera = Camera()
+voice = VoiceTracker()
 
 
 def sensor_status(*keys: str) -> str:
@@ -240,7 +244,7 @@ def status_message() -> dict:
             "camera": camera.status,
             # vision/face.py isn't connected yet; fake mode sends a fake blink_rate.
             "face": "simulated" if FAKE else ("ok" if sensor_status("blink_rate") == "ok" else "off"),
-            "voice": "off",  # cut for now (README)
+            "voice": voice.status,
         },
         # Lets a dashboard that reloads mid-session pick the session back up.
         "session": None if session is None else {
@@ -281,6 +285,9 @@ async def handle_sample(sample: dict) -> None:
             breath_history.popleft()
         sample["breath_rate"] = scoring.breath_rate(list(breath_history), BREATH_WINDOW_S)
     sample["type"] = "sample"
+    features = voice.latest()  # real mic, even with VERIFI_FAKE=1 (like the camera)
+    if features:
+        sample.update({k: None if v is None else round(v, 2) for k, v in features.items()})
     now = time.time()
     for key in ("gsr", "hr", "spo2", "temp", "flex", "blink_rate"):
         if sample.get(key) is not None:
@@ -325,6 +332,7 @@ async def serial_loop(queue: asyncio.Queue) -> None:
 async def lifespan(app: FastAPI):
     global serial_reader
     camera.start()
+    voice.start()
     if FAKE:
         print("source: FAKE signals (VERIFI_FAKE=1)", flush=True)
         source = asyncio.create_task(fake_loop())
@@ -341,6 +349,7 @@ async def lifespan(app: FastAPI):
     for task in tasks:
         task.cancel()
     camera.stop()
+    voice.stop()
     if serial_reader:
         serial_reader.stop()
     if session:

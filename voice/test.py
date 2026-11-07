@@ -76,6 +76,9 @@ def extract_features(audio_file):
     consecutive `datapoint_interval`-second window.
     """
     sound = parselmouth.Sound(audio_file)
+    if sound.duration < 0.05:
+        # The last chunk at stop can be a few samples long; Praat can't analyze that.
+        return None
     pitch = sound.to_pitch()            # fundamental frequency (F0) over time
     intensity = sound.to_intensity()    # loudness (dB) over time
 
@@ -145,6 +148,16 @@ def process_audio_files(directory):
 
     return features_list
 
+def _nan_to_none(value):
+    """Praat gives NaN for silence; JSON has no NaN, so write null instead."""
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _nan_to_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_nan_to_none(v) for v in value]
+    return value
+
 def analyze_chunks(path):
     """Callback for ChunkRecorder: runs once for each finished chunk.
 
@@ -152,9 +165,11 @@ def analyze_chunks(path):
     outputs/temp/<chunk name>.json (the outputs/temp folder must already exist).
     """
     data = extract_features(path)
+    if data is None:
+        return
 
     with open(cwd / "outputs" / "temp" / f"{Path(path).stem}.json", "w") as json_file:
-        json.dump(data, json_file, indent=4)
+        json.dump(_nan_to_none(data), json_file, indent=4)
 
 def record(filename):
     """Start recording in the background and return the recorder.
@@ -162,7 +177,8 @@ def record(filename):
     `filename` is the name for the final merged recording (without extension).
     """
     # Clear leftover per-chunk JSON files from the previous session
-    # (fails if outputs/temp doesn't exist)
+    (cwd / "outputs" / "temp").mkdir(parents=True, exist_ok=True)
+    (cwd / "outputs" / "final").mkdir(parents=True, exist_ok=True)
     for file_path in (cwd / "outputs" / "temp").iterdir():
         if file_path.is_file():
             file_path.unlink()
@@ -182,6 +198,8 @@ def record(filename):
 def stop_recording(rec):
     """Stop recording, analyze the merged file, save the results, return the JSON path."""
     path = rec.stop()   # stops the mic, merges the chunks, returns the merged file's path
+    if path is None:
+        return None
 
     features_list = extract_features(path)   # analyze the complete recording
 
@@ -189,7 +207,7 @@ def stop_recording(rec):
     filepath = cwd / "outputs" / "final" / f"{time.time()}.json"
 
     with open(filepath, "w") as json_file:
-        json.dump(features_list, json_file, indent=4)
+        json.dump(_nan_to_none(features_list), json_file, indent=4)
 
     return filepath
 

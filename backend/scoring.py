@@ -19,6 +19,9 @@ MIN_STD = {
     # a tight floor made the dashboard flag normal variation as a reaction.
     "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 2.0, "blink_rate": 3.0, "lip_compression": 0.05,
     "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
+    # Voice: only present while the subject talks, so these get a baseline only if they
+    # speak during it. Drawn on the dashboard, not part of stress or spike yet.
+    "pitch": 5.0, "jitter": 0.2,
 }
 
 # spike = weighted mix of per-signal responses, weighted toward GSR.
