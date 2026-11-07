@@ -13,9 +13,9 @@ Prereqs: sensors wired per [Hardware](#hardware-arduino-uno), Arduino flashed wi
 First time only, from the repo root:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python openCV/download_models.py
+python3 openCV/download_models.py
 ```
 
 Then two terminals, both with the venv active:
