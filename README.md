@@ -90,17 +90,17 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
        └────────────┬────────────┴──────────────┘
                     ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │  Python backend — ONE process, ONE clock                     │
-  │                                                              │
-  │  serial_io.py ──┐                                            │
-  │  camera.py ─────┼──► face.py ────┐                           │
-  │  voice/live.py ─┘                ├──► scoring.py             │
-  │                                  │    (baseline, z-scores)   │
-  │                                  ▼            │              │
-  │                        server.py (FastAPI + /ws)             │
-  │                                  │            │              │
-  │                                  │            └──► data/*.csv│
-  └──────────────────────────────────┼───────────────────────────┘
+  │  Python backend — ONE process, ONE clock                    │
+  │                                                             │
+  │  serial_io.py ──┐                                           │
+  │  camera.py ─────┼──► face.py ────┐                          │
+  │  voice/live.py ─┘                ├──► scoring.py            │
+  │                                  │    (baseline, z-scores)  │
+  │                                  ▼            │             │
+  │                        server.py (FastAPI+/ws)              │
+  │                                  │          │               │
+  │                                  │          └──► data/*.csv │
+  └──────────────────────────────────┼──────────────────────────┘
                                      │ WebSocket JSON, ~20/s
                                      ▼
   ┌─────────────────────────────────────────────────────────────┐
