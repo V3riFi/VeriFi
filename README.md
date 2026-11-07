@@ -4,21 +4,26 @@
 
 A multimodal **suspicion detector** for interrogations. The interrogator asks questions and can show objects or crime-scene images; the suspect answers normally. VeriFi watches the subject's body and shows a live stress indicator plus which signals spiked after each question, compared against that person's own calm baseline.
 
+**It is not a truth machine.** It shows *when* the subject reacted, *which* signals reacted, and by how much. The interrogator makes the call. See [Limitations](#limitations).
+
 ---
 
 ## Quick run
 
 Prereqs: sensors wired per [Hardware](#hardware-arduino-uno), Arduino flashed with `firmware/verifi/sensors/` per [Arduino](#arduino), and the **Serial Monitor/Plotter closed**.
 
-First time only, from the repo root:
+First time only:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+git clone https://github.com/V3riFi/VeriFi.git
+cd VeriFi
+git config core.hooksPath .githooks                  # once per clone; enables the commit-message hook
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python3 openCV/download_models.py
+python openCV/download_models.py
 ```
 
-Then two terminals, both with the venv active:
+Then two terminals, both from the repo root with the venv active:
 
 ```bash
 # terminal 1 — backend (auto-detects the Arduino)
@@ -90,22 +95,22 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
        └────────────┬────────────┴──────────────┘
                     ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │  Python backend — ONE process, ONE clock                    │
-  │                                                             │
-  │  serial_io.py ──┐                                           │
-  │  camera.py ─────┼──► face.py ────┐                          │
-  │  voice/live.py ─┘                ├──► scoring.py            │
-  │                                  │    (baseline, z-scores)  │
-  │                                  ▼            │             │
-  │                        server.py (FastAPI+/ws)              │
-  │                                  │          │               │
-  │                                  │          └──► data/*.csv │
-  └──────────────────────────────────┼──────────────────────────┘
+  │  Python backend — ONE process, ONE clock                     │
+  │                                                              │
+  │  serial_io.py ──┐                                            │
+  │  camera.py ─────┼──► face.py ────┐                           │
+  │  voice/live.py ─┘                ├──► scoring.py             │
+  │                                  │    (baseline, z-scores)   │
+  │                                  ▼            │              │
+  │                        server.py (FastAPI + /ws)             │
+  │                                  │            │              │
+  │                                  │            └──► data/*.csv│
+  └──────────────────────────────────┼───────────────────────────┘
                                      │ WebSocket JSON, ~20/s
                                      ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │  Frontend (Vite + React)                                    │
-  │  live charts · stress indicator · question timeline         │
+  │  Frontend (Vite + React)                                     │
+  │  live charts · stress indicator · question timeline           │
   └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -149,14 +154,14 @@ requirements.txt           Python packages (hand-written)
 
 ## Setup
 
-### Prerequisites
+Setup has seven steps. Steps 2–3 apply to everyone; step 4 is only for face tracking; step 7 is only for hardware.
+
+### 1. Prerequisites
 - Python 3.9–3.12 (required by MediaPipe)
 - Node.js **20.19+ or 22.12+** (Vite requirement)
 - Arduino IDE (for the firmware)
 
-### Clone + Python environment
-
-For everyone, regardless of what they work on.
+### 2. Clone + Python environment (whole repo, everyone)
 
 ```bash
 git clone https://github.com/V3riFi/VeriFi.git
@@ -167,7 +172,7 @@ source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Python packages
+### 3. Python dependencies (whole repo, everyone)
 
 `requirements.txt` is written **by hand** — do not overwrite it with `pip freeze` (the team mixes Mac/Windows; a frozen file from one OS can break installs on the other). Contents:
 
@@ -187,9 +192,7 @@ matplotlib
 
 **Intel Mac note:** if `uname -m` prints `x86_64` on a Mac, `mediapipe==1.2.2` won't install (Apple Silicon wheels only). Install `mediapipe==0.10.21` by hand instead (needs Python 3.9–3.12) and leave `requirements.txt` unchanged.
 
-### Face models (vision)
-
-Once per laptop:
+### 4. Face models (vision only, once per laptop)
 
 ```bash
 python openCV/download_models.py
@@ -197,7 +200,7 @@ python openCV/download_models.py
 
 Without them the backend still runs, with face features off.
 
-### Frontend
+### 5. Frontend dependencies
 
 First time only (whoever sets up the frontend):
 
@@ -213,7 +216,7 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-### Run
+### 6. Run (backend + frontend)
 
 From the repo root, with the venv active:
 
@@ -229,7 +232,7 @@ Start the frontend in a second terminal. `http://localhost:8000/` shows whether 
 
 **Hardware check without the backend:** `python -m backend.serial_io` opens a live plot of the Arduino's sensors. Don't run it while the backend is running.
 
-### Arduino
+### 7. Arduino firmware (hardware only)
 
 1. Install the [Arduino IDE](https://www.arduino.cc/en/software).
 2. Install the **DFRobot_BloodOxygen_S** library (for the MAX30102 module).
