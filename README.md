@@ -61,7 +61,7 @@ Two rules:
 ## Repo layout
 
 ```
-firmware/verifi/verifi.ino   Arduino sketch, streams all sensors over serial (hardware team)
+firmware/verifi/sensors/     Arduino sketch (sensors.ino), streams all sensors over serial (hardware team)
 backend/server.py            FastAPI app + /ws WebSocket, session + question timing, CSV logging (entry point)
 backend/serial_io.py         serial reader thread
 backend/scoring.py           baseline, live stress indicator, per-question response scoring
@@ -135,13 +135,29 @@ Opens at http://localhost:5173.
 
 ### Run
 
-From the repo root (not from inside `backend/`), with the venv active:
+From the repo root (not from inside `backend/`), with the venv active.
+
+**With the Arduino plugged in** (the port is auto-detected):
 
 ```
 uvicorn backend.server:app --port 8000
 ```
 
+The terminal prints `serial: connected to ...` when it finds the board. If it picks the wrong port, set it yourself: `VERIFI_PORT=/dev/cu.usbmodem1101 uvicorn backend.server:app --port 8000`.
+
+**Without hardware** (fake signals, for frontend work):
+
+```
+VERIFI_FAKE=1 uvicorn backend.server:app --port 8000
+```
+
+Add `VERIFI_BASELINE_S=10` to either command for a 10 s baseline instead of 60 s while testing. On Windows PowerShell, set each variable first (`$env:VERIFI_FAKE=1`), then run the `uvicorn` command.
+
+`http://localhost:8000/` shows whether the backend is on fake or serial data and whether the Arduino is connected.
+
 Then start the frontend in a second terminal.
+
+**Hardware check without the backend:** `python -m backend.serial_io` opens a live plot of the Arduino's sensors. Don't run it while the backend is running.
 
 ### MediaPipe note
 
@@ -168,8 +184,8 @@ The model file `face_landmarker.task` is downloaded separately: see the Models s
 ### Arduino
 
 1. Install the [Arduino IDE](https://www.arduino.cc/en/software).
-2. Library Manager: install **SparkFun MAX3010x Pulse and Proximity Sensor Library** (only needed if the pulse sensor is a MAX30102/MAX30105, check the chip).
-3. Open `firmware/verifi/verifi.ino`, select **Arduino Uno** and the right port, upload.
+2. Install the **DFRobot_BloodOxygen_S** library (for the DFRobot MAX30102 heart rate / oxygen module).
+3. Open the sketch in `firmware/verifi/sensors/`, select **Arduino Uno** and the right port, upload.
 4. **Close the Serial Monitor/Plotter before running the Python backend.** Only one program can use the port at a time.
 
 Serial port names:
@@ -191,13 +207,13 @@ Serial port names:
 ```
 
 - `start`: begins a session. The backend records the baseline first.
-- `question`: sent when the interrogator clicks **Ask**. `text` and `stimulus` are optional, and `stimulus` is the object or image shown (or `null`). A hardware button press (`EVT:BUTTON`) starts a question too, labelled automatically.
+- `question`: sent when the interrogator clicks **Ask**. `text` and `stimulus` are optional, and `stimulus` is the object or image shown (or `null`). A hardware button press will start a question too, labelled automatically (not in the sketch yet).
 - `stop`: ends the session.
 
 **Backend -> frontend:**
 
 ```
-{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "blink_rate": 18, "stress": 41}
+{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "stress": 41}
 {"type": "baseline", "t": 1180.0, "phase": "start", "duration": 60}
 {"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 451.2, "hr": 72.4}, "std": {"gsr": 3.1, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
 {"type": "question", "t": 1250.0, "label": "Q3", "phase": "start"}
@@ -207,7 +223,10 @@ Serial port names:
 {"type": "frame",    "t": 1250.1, "jpeg": "<base64 JPEG>"}
 ```
 
-- `sample`: about 20 per second. `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
+- `sample`: about 10 per second from the Arduino (20 with fake signals). `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
+  - **Any signal can be `null` or missing**, so draw a gap instead of crashing. `hr`, `spo2` and `temp` are `null` for the first seconds until the pulse sensor locks on, `breath_rate` is `null` for the first ~15 s, and `blink_rate` is missing until vision is connected.
+  - `hr` changes in steps (the pulse module recalculates about every 4 s), not as a smooth line.
+  - `temp` is in °C (read by the pulse sensor chip). `spo2` is blood oxygen in %.
 - `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between. `start` carries the baseline length in seconds. `done` carries each signal's baseline `mean` and `std`, plus `alert_sd` and `stress_alert`, which the dashboard uses to draw the baseline and normal range on every chart and turn the line red outside it.
 - `question`: the backend's timestamped echo of a question starting. The dashboard puts a marker on the timeline here.
 - `response`: sent about 10 s after a question starts. `spike` is the overall response in standard deviations above baseline. `signals` breaks it down per signal (in standard deviations, except `breath_hold_s` in seconds).
@@ -229,7 +248,7 @@ Serial port names:
 
 **Errors:** if a control message can't be run (for example `question` while the baseline is still recording), the backend replies to that client only with `{"type": "error", "message": "..."}`. Show it to the interrogator.
 
-**What the backend sends right now:** the full session flow above, on **fake** signals, plus `status` (sensors show as `simulated`) and real webcam `frame`s. The fake GSR, heart rate and breathing react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. For quicker testing, shorten the baseline:
+**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status` and real webcam `frame`s. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button. For quicker testing, shorten the baseline:
 
 ```
 VERIFI_BASELINE_S=10 uvicorn backend.server:app --port 8000
@@ -244,18 +263,30 @@ VERIFI_BASELINE_S=10 uvicorn backend.server:app --port 8000
 | Grove GSR | Red -> 5V, Black -> GND, Yellow -> A0, White -> not connected |
 | Flex sensor (breathing belt) | 5V -> flex -> **A1** -> resistor -> GND (resistor about equal to the flex sensor's flat resistance) |
 | BioAMP EXG Pill (optional) | VCC -> 5V, GND -> GND, OUT -> A2 |
-| Pulse / SpO2 (MAX3010x) | SDA -> A4, SCL -> A5, plus power and GND (check the board's voltage marking) |
+| Pulse / SpO2 (DFRobot MAX30102, I2C address 0x57) | SDA -> A4, SCL -> A5, plus power and GND (check the board's voltage marking) |
 | Question button (interrogator) | D2 and GND (internal pullup, no resistor needed) |
 
 ## Serial protocol
 
-115200 baud, one message per line.
+115200 baud, one line per sample, 10 per second. This is what the current sketch sends (parsed by `backend/serial_io.py`):
 
-| Direction | Message | Meaning |
-|---|---|---|
-| Board -> laptop | `EVT:HELLO` | Board booted |
-| Board -> laptop | `EVT:DATA:<ms>,<gsr>,<flex>,<exg>,<ir>,<red>` | One sample of every sensor (~50 Hz). `ir`/`red` are `-1` if the pulse sensor isn't found |
-| Board -> laptop | `EVT:BUTTON` | Interrogator's button pressed: starts a question |
+```
+STATUS: starting
+STATUS: MAX30102 ready
+breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
+```
+
+| Field | Meaning |
+|---|---|
+| `breath` | Flex sensor on the chest belt, raw ADC (0-1023). The backend calls it `flex` and works out `breath_rate` from it |
+| `gsr` | Skin conductance, raw ADC (0-1023) |
+| `heartbeat` | BPM from the pulse module. The module recalculates about every 4 s; the board polls it every 1 s and averages the last 2 readings. `0` = no reading yet |
+| `spo2` | Blood oxygen (%). Older versions of the sketch labelled it `Blood Pressure:`, which the backend still accepts |
+| `temp` | °C from the pulse module chip |
+
+`STATUS:` lines are printed in the backend terminal and otherwise ignored. If you change the line format, update `LINE_RE` in `backend/serial_io.py` in the same commit.
+
+**Not in the sketch yet:** the interrogator's question button (planned: print `BUTTON` on its own line when pressed).
 
 ## Team
 

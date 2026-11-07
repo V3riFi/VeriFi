@@ -5,6 +5,8 @@
 export const SIGNALS = [
   { key: 'gsr', field: 'gsr', label: 'Skin conductance', unit: 'raw', direction: 'up', minSpan: 40, source: 'gsr' },
   { key: 'hr', field: 'hr', label: 'Heart rate', unit: 'bpm', direction: 'up', minSpan: 16, source: 'pulse' },
+  { key: 'spo2', field: 'spo2', label: 'Blood oxygen', unit: '%', direction: 'both', minSpan: 4, source: 'pulse' },
+  { key: 'temp', field: 'temp', label: 'Temperature', unit: '°C', direction: 'both', minSpan: 1, source: 'pulse' },
   {
     key: 'breathing',
     field: 'flex',
