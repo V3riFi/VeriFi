@@ -14,7 +14,10 @@ function rawValue(latest, field) {
 
 function Status({ signal, value, baseline, componentStatus }) {
   if (!Number.isFinite(value)) {
-    return <span className="tile-note">{componentStatus === 'missing' ? 'Sensor not found' : 'No data yet'}</span>
+    if (componentStatus === 'missing') return <span className="tile-note">Sensor not found</span>
+    // A working mic gives no pitch during silence; that's normal, not a fault.
+    if (signal.source === 'voice' && componentStatus === 'ok') return <span className="tile-note">Not speaking</span>
+    return <span className="tile-note">No data yet</span>
   }
   const field = signal.tileField ?? signal.field
   const thresholds = thresholdsFor({ ...signal, field }, baseline)

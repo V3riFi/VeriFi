@@ -22,7 +22,7 @@ It is not a truth machine. It shows *when* the subject reacted, *which* signals 
 | Heart rate | Pulse / SpO2 sensor (finger) | Change from baseline |
 | Breathing | Flex sensor on a chest belt | Breathing rate, breath holding |
 | Face | Webcam + MediaPipe Face Landmarker | Blink rate (Eye Aspect Ratio), hand over face, lip compression |
-| Voice (cut for now, maybe Sunday) | Laptop mic + Parselmouth | Pitch and jitter |
+| Voice | Laptop mic + Parselmouth (`voice/live.py`) | Pitch and jitter while the subject talks (shown on the dashboard, not part of stress yet) |
 
 ## How it works
 
@@ -47,7 +47,7 @@ Everything runs locally on one laptop. No cloud, no database, no Docker.
 | Backend | Python, FastAPI + uvicorn, **one process** |
 | Serial | `pyserial`, background thread |
 | Vision | `opencv-python` + `mediapipe` (Tasks API), background thread in the backend process |
-| Voice (cut for now, maybe Sunday) | `sounddevice` + `praat-parselmouth` |
+| Voice | `sounddevice` + `praat-parselmouth`, background thread in the backend process |
 | Scoring | `numpy` (z-scores against each person's baseline period, no model training) |
 | Storage | CSV files in `data/` |
 | Frontend | Vite + React, charts with uPlot or Chart.js |
@@ -213,7 +213,7 @@ Serial port names:
 **Backend -> frontend:**
 
 ```
-{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "stress": 41}
+{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "pitch": 182.4, "jitter": 1.1, "shimmer": 6.3, "voice_db": 61.0, "stress": 41}
 {"type": "baseline", "t": 1180.0, "phase": "start", "duration": 60}
 {"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 451.2, "hr": 72.4}, "std": {"gsr": 3.1, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
 {"type": "question", "t": 1250.0, "label": "Q3", "phase": "start"}
@@ -225,6 +225,7 @@ Serial port names:
 
 - `sample`: about 10 per second from the Arduino (20 with fake signals). `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
   - **Any signal can be `null` or missing**, so draw a gap instead of crashing. `hr`, `spo2` and `temp` are `null` for the first seconds until the pulse sensor locks on, `breath_rate` is `null` for the first ~15 s, and `blink_rate` is missing until vision is connected.
+  - Voice: `pitch` (Hz), `jitter` and `shimmer` (%) are `null` whenever nobody is talking, so expect gaps between answers. `voice_db` is loudness. All four are missing if the mic isn't working. Set `VERIFI_VOICE=off` to disable the mic, or `VERIFI_VOICE=<device index or name>` to pick one. On a Mac, the terminal running the backend needs microphone permission.
   - `hr` changes in steps (the pulse module recalculates about every 4 s), not as a smooth line.
   - `temp` is in °C (read by the pulse sensor chip). `spo2` is blood oxygen in %.
 - `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between. `start` carries the baseline length in seconds. `done` carries each signal's baseline `mean` and `std`, plus `alert_sd` and `stress_alert`, which the dashboard uses to draw the baseline and normal range on every chart and turn the line red outside it.
@@ -248,7 +249,7 @@ Serial port names:
 
 **Errors:** if a control message can't be run (for example `question` while the baseline is still recording), the backend replies to that client only with `{"type": "error", "message": "..."}`. Show it to the interrogator.
 
-**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status` and real webcam `frame`s. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button.
+**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status`, real webcam `frame`s and live voice features from the laptop mic. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button.
 
 ## Wiring (Arduino UNO)
 
