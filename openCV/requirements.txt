@@ -1,0 +1,5 @@
+# Versions verified together on Windows / Python 3.14 (webcam run + tests).
+mediapipe==1.2.2
+opencv-python==5.0.0.93
+numpy==2.5.4
+pyserial==3.5

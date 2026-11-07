@@ -1,0 +1,16 @@
+# environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# session data: recordings and results stay on the interview laptop (privacy), never in git
+data/
+*.jsonl
+*.mp4
+
+# downloaded by setup.bat (download_models.py)
+vision/*.task
+vision/*.part
+
+# papers we read (copyrighted PDFs: cite them, don't redistribute)
+research/
