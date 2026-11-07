@@ -4,8 +4,11 @@ The backend is the only program that opens the webcam (see README), and the
 dashboard can't, so this thread keeps the newest frame as a small JPEG and the
 server sends it over the WebSocket as a "frame" message.
 
-When vision/face.py's FaceTracker lands, it should share this capture rather
-than open the camera a second time: only one program can hold the webcam.
+vision/face.py's FaceTracker must NOT open the webcam itself (only one program
+can hold it). It reads frames from here instead:
+
+    t, frame = camera.latest_frame()   # full-size BGR numpy array, as cv2 gives it
+    # skip it if t is the same as last time (no new frame yet)
 
 Env variable:
   VERIFI_CAMERA  camera index (default 0), or "off" to disable video
@@ -31,6 +34,7 @@ class Camera:
         self.index = 0 if self.disabled else int(setting)
         self.status = "off" if self.disabled else "missing"  # "ok" | "missing" | "off"
         self._latest: tuple[float, str] | None = None
+        self._raw = None  # (capture time, full-size BGR frame) for vision
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._capture = None
@@ -50,6 +54,15 @@ class Camera:
         """(capture time, base64 JPEG) of the newest frame, or None."""
         with self._lock:
             return self._latest
+
+    def latest_frame(self):
+        """(capture time, full-size BGR numpy frame) of the newest frame, or None. For vision.
+
+        Every camera frame, not just the ~10/s sent to the dashboard. Don't modify the
+        array in place; copy it first if you need to draw on it.
+        """
+        with self._lock:
+            return self._raw
 
     def _open(self):
         try:
@@ -84,6 +97,8 @@ class Camera:
             self.status = "ok"
 
             now = time.time()
+            with self._lock:
+                self._raw = (now, frame)  # read() gives a new array each time, so sharing it is safe
             if now - last_encode < 1 / SEND_FPS:
                 continue
             last_encode = now

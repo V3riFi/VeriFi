@@ -15,7 +15,9 @@ WINDOW_S = 10.0   # response window after the question starts
 # Smallest standard deviation we trust per signal. Stops a very flat baseline
 # (or a sensor stuck on one value) from turning tiny wiggles into huge spikes.
 MIN_STD = {
-    "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 0.5, "blink_rate": 1.0, "lip_compression": 0.05,
+    # breath_rate and blink_rate swing a lot naturally (talking, looking around);
+    # a tight floor made the dashboard flag normal variation as a reaction.
+    "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 2.0, "blink_rate": 3.0, "lip_compression": 0.05,
     "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
 }
 
@@ -28,9 +30,12 @@ SPIKE_WEIGHTS = {"gsr": 0.6, "hr": 0.25, "breath_hold": 0.15}
 # also gets extra weight: its weight is multiplied by its distance once that
 # passes 1 SD, so one strongly reacting signal isn't averaged away by quiet ones.
 # STRESS_FULL_SCALE_SD maps to 100.
-STRESS_WEIGHTS = {"gsr": 0.45, "hr": 0.25, "breath_rate": 0.15, "blink_rate": 0.1, "lip_compression": 0.05}
+# breath_rate is NOT in stress: answering out loud changes breathing, and with it
+# in, talking alone pushed stress to ~94 with GSR and heart rate flat. Breath
+# holds still count, per question, in the spike score (SPIKE_WEIGHTS).
+STRESS_WEIGHTS = {"gsr": 0.5, "hr": 0.3, "blink_rate": 0.13, "lip_compression": 0.07}
 # GSR and heart rate only count when above baseline. These count a change either way.
-STRESS_TWO_SIDED = {"breath_rate", "blink_rate"}
+STRESS_TWO_SIDED = {"blink_rate"}
 STRESS_WINDOW_S = 2.0
 STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data: GSR creeps up over a session
 
