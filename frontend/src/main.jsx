@@ -1,0 +1,14 @@
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import 'uplot/dist/uPlot.min.css'
+import './index.css'
+import App from './App.jsx'
+import { connect } from './lib/store'
+
+connect()
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
