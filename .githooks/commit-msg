@@ -1,0 +1,12 @@
+#!/bin/sh
+# Removes Claude co-author lines and "Generated with Claude Code" lines from commit messages.
+# Enable once per clone:  git config core.hooksPath .githooks
+
+msg_file="$1"
+tmp_file="$msg_file.tmp"
+
+grep -v -i -E '^co-authored-by:.*(claude|noreply@anthropic\.com)|generated with \[?claude code' "$msg_file" > "$tmp_file"
+
+# Drop trailing blank lines left behind by the removal.
+awk '{ lines[NR] = $0 } END { n = NR; while (n > 0 && lines[n] ~ /^[[:space:]]*$/) n--; for (i = 1; i <= n; i++) print lines[i] }' "$tmp_file" > "$msg_file"
+rm -f "$tmp_file"

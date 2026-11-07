@@ -28,6 +28,27 @@ Sensors -> Arduino UNO --USB serial--> Python backend <-- webcam (OpenCV + Media
                                          Frontend (live charts, CIT screen, results)
 ```
 
+## Tech stack
+
+Everything runs locally on one laptop. No cloud, no database, no Docker.
+
+| Layer | Tech |
+|---|---|
+| Firmware | Arduino C++ (Arduino IDE) on an Arduino UNO |
+| Backend | Python, FastAPI + uvicorn, **one process** |
+| Serial | `pyserial`, background thread |
+| Vision | `opencv-python` + `mediapipe` (Tasks API), background thread in the backend process |
+| Voice (stretch goal) | `sounddevice` + `praat-parselmouth` |
+| Scoring | `numpy` (z-scores against each person's baseline, no model training) |
+| Storage | CSV files in `data/` |
+| Frontend | Vite + React, charts with uPlot or Chart.js |
+| Backend -> frontend | WebSocket at `ws://localhost:8000/ws`, JSON, about 20 updates/sec |
+
+Two rules:
+
+- **Only the backend opens the webcam and the serial port.** Both can only be used by one program at a time. If the frontend needs video, the backend sends small JPEG frames over the WebSocket.
+- **Serial and vision run in the same Python process**, so every signal shares one clock and lines up in time.
+
 ## Planned repo layout
 
 > The repo currently has empty placeholder files in the root. This is the layout we're moving to.
@@ -35,8 +56,8 @@ Sensors -> Arduino UNO --USB serial--> Python backend <-- webcam (OpenCV + Media
 ```
 firmware/verifi/verifi.ino   Arduino sketch, streams all sensors over serial
 backend/                     serial reader, buffers, CSV logging, scoring, WebSocket server
-vision/                      webcam + MediaPipe face features
-frontend/                    dashboard UI
+vision/                      webcam + MediaPipe face features (imported by the backend, not run on its own)
+frontend/                    Vite + React dashboard
 data/                        recorded sessions (NOT committed, see CONTRIBUTING.md)
 requirements.txt             pinned Python packages
 ```
@@ -61,6 +82,51 @@ Then:
 ```
 pip install -r requirements.txt
 ```
+
+`requirements.txt` is written **by hand** with only the packages we use directly. Don't overwrite it with `pip freeze`: our team mixes Mac and Windows, and a frozen file from one OS can fail to install on the other. If it isn't in the repo yet, create it with:
+
+```
+fastapi
+uvicorn[standard]
+pyserial
+opencv-python
+mediapipe==1.2.2
+numpy
+sounddevice
+praat-parselmouth
+```
+
+`mediapipe` is pinned because our vision code depends on the 1.x Tasks API. `uvicorn[standard]` (not plain `uvicorn`) is needed for WebSocket support.
+
+### Frontend
+
+Needs **Node.js 20.19+ or 22.12+** (Vite's requirement). Check with `node -v`.
+
+First time only (whoever sets up the frontend):
+
+```
+npm create vite@latest frontend -- --template react
+```
+
+Everyone else:
+
+```
+cd frontend
+npm install
+npm run dev
+```
+
+Opens at http://localhost:5173.
+
+### Run (once the backend exists)
+
+From the repo root, with the venv active:
+
+```
+uvicorn backend.server:app --port 8000
+```
+
+Then start the frontend in a second terminal. `backend/server.py` with a FastAPI `app` is the planned entry point; update this line if the file ends up named differently.
 
 ### MediaPipe note
 

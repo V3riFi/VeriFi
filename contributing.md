@@ -5,7 +5,7 @@ We have 6 people and one weekend. These rules exist so nobody overwrites anybody
 ## The golden rules
 
 1. **Pull before you start, pull before you push.**
-2. **Never force push** (`git push -f`). It can wipe other people's commits.
+2. **Never force push** (`git push -f`). It can wipe other people's commits. On `main` it's blocked anyway: a ruleset stops force pushes to `main` and deleting it. Normal pushes and PR merges to `main` still work.
 3. **Work on a branch, not on `main`.**
 4. **Only touch your own folder** unless you've told the owner.
 5. **Don't push something that breaks the main run.** If it's half-done, keep it on your branch.
@@ -71,14 +71,21 @@ git merge main
 
 ## Python environment
 
-Always work inside the venv (see README). If you install a new package:
+Always work inside the venv (see README). If you need a new package:
 
-```
-pip install <package>
-pip freeze > requirements.txt
-```
+1. `pip install <package>`
+2. Add **one line** with its name to `requirements.txt` by hand.
+3. Commit it and tell the group chat so everyone runs `pip install -r requirements.txt`.
 
-Commit `requirements.txt` and tell the group chat so everyone runs `pip install -r requirements.txt`.
+Never run `pip freeze > requirements.txt`. It pins every sub-dependency for your OS, which can break installs on the other OS (we have both Mac and Windows) and causes merge conflicts.
+
+## Frontend packages
+
+Install with `npm install <package>` inside `frontend/`. Commit `package.json` **and** `package-lock.json`, never `node_modules/`. After pulling, run `npm install` again if either file changed.
+
+## Webcam and serial port
+
+Only the backend opens the webcam and the Arduino's serial port. Don't call `getUserMedia` in the frontend or run a separate script that opens the camera or port while the backend is running. The second program will fail or block the first. Close the Arduino Serial Monitor/Plotter before starting the backend.
 
 ## Do not commit
 
@@ -110,7 +117,7 @@ Short, present tense, says what changed: `Add GSR baseline calculation`, `Fix se
 Don't change these without telling everyone, since other people's code depends on them:
 
 - **Serial protocol** (firmware <-> backend): see README.
-- **WebSocket messages** (backend <-> frontend): JSON, one object per update. Add new fields freely; don't rename or remove existing ones without asking.
+- **WebSocket messages** (backend <-> frontend): `ws://localhost:8000/ws`, JSON, one object per update. Add new fields freely; don't rename or remove existing ones without asking.
 - **Vision output** (vision <-> backend): a dict of features per frame window, e.g. `{"blink_rate": 18.0, "hand_on_face": false}`.
 
 ## Testing with real people
