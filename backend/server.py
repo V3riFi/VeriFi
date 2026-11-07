@@ -2,7 +2,7 @@
 
 Run from the repo root:  uvicorn backend.server:app --port 8000
 
-Owns the WebSocket at /ws (message contract in README), starts the serial
+Owns the WebSocket at /ws (see "WebSocket contract" in README), starts the serial
 and vision threads, runs the CIT session timing, and logs CSVs to data/.
 
 Right now it streams FAKE "sample" messages so the frontend can be built
