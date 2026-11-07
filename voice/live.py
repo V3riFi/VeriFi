@@ -37,6 +37,7 @@ PITCH_FLOOR = 75        # Hz, the same 75-500 Hz search range as voice/audio/ana
 PITCH_CEILING = 500
 MIN_VOICED_S = 0.15     # less voiced audio than this in the window = not speaking
 REOPEN_EVERY_S = 5.0
+LOUDNESS_S = 0.2        # loudness uses only the newest audio so it reacts quickly
 
 
 def _finite(x: float) -> float | None:
@@ -53,7 +54,9 @@ def analyze(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> dict:
     if sound.duration < 3 / PITCH_FLOOR:  # Praat needs 3 periods of the lowest pitch
         return out
 
-    intensity = sound.to_intensity(minimum_pitch=PITCH_FLOOR)
+    recent = samples[-int(LOUDNESS_S * sample_rate):]
+    loud = parselmouth.Sound(samples.recent.astype(np.float64), sampling_frequency=sample_rate)
+    intensity = loud.to_intensity(minimum_pitch=PITCH_FLOOR)
     out["voice_db"] = _finite(praat.call(intensity, "Get mean", 0, 0, "energy"))
 
     pitch = sound.to_pitch(pitch_floor=PITCH_FLOOR, pitch_ceiling=PITCH_CEILING)
