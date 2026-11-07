@@ -21,7 +21,7 @@ pip install -r requirements.txt
 python3 openCV/download_models.py
 ```
 
-Then two terminals, both from the repo root with the venv active:
+Then two terminals, both from the repo root with the venv active. This needs to be run every startup:
 
 ```bash
 # terminal 1 — backend (auto-detects the Arduino)
@@ -108,8 +108,6 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
    │  live charts · stress indicator · question timeline      │
    └──────────────────────────────────────────────────────────┘
 ```
-
-Everything runs locally on one laptop. No cloud, no database, no Docker.
 
 | Layer | Tech |
 |---|---|
