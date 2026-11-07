@@ -238,7 +238,7 @@ Serial port names:
 
 - **Baseline:** the ~60 s calm period at the start. Its mean and standard deviation per signal are the reference for everything after.
 - **Question response:** for each signal, the peak in the ~10 s window after the question starts minus the mean of the 2 s before it, divided by that signal's baseline standard deviation. `spike` combines these, weighted toward GSR.
-- **Live `stress`:** a smoothed, weighted combination of how far every signal currently is from baseline, scaled to 0 to 100. Weights favour GSR (0.45) and heart rate (0.25), then breathing rate, blink rate and lip compression. GSR and heart rate count only when above baseline; breathing and blink rate count a change either way. A signal that is an outlier right now counts for more: its weight is multiplied by its distance from baseline once that passes 1 SD. `stress_alert` (25) is the level that equals 2 SD.
+- **Live `stress`:** a smoothed, weighted combination of how far every signal currently is from baseline, scaled to 0 to 100. Weights favour GSR (0.5) and heart rate (0.3), then blink rate and lip compression. GSR and heart rate count only when above baseline; blink rate counts a change either way. Breathing rate is left out on purpose: answering out loud changes it, which would push stress up every time the subject talks (breath holds still count in each question's `spike`). A signal that is an outlier right now counts for more: its weight is multiplied by its distance from baseline once that passes 1 SD. `stress_alert` (25) is the level that equals 2 SD.
 
 **Rules:**
 
@@ -248,13 +248,7 @@ Serial port names:
 
 **Errors:** if a control message can't be run (for example `question` while the baseline is still recording), the backend replies to that client only with `{"type": "error", "message": "..."}`. Show it to the interrogator.
 
-**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status` and real webcam `frame`s. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button. For quicker testing, shorten the baseline:
-
-```
-VERIFI_BASELINE_S=10 uvicorn backend.server:app --port 8000
-```
-
-(Windows PowerShell: `$env:VERIFI_BASELINE_S=10` first, then the `uvicorn` command.)
+**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status` and real webcam `frame`s. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button.
 
 ## Wiring (Arduino UNO)
 
