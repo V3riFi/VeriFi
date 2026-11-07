@@ -3,7 +3,10 @@
 Current mediapipe releases ship only the Tasks API (no mp.solutions), which needs these .task files.
 """
 import pathlib
+import shutil
+import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 MODELS = {
@@ -26,7 +29,14 @@ def main() -> None:
             continue
         print(f"[..] downloading {name}")
         tmp = dst.with_suffix(".part")
-        urllib.request.urlretrieve(url, tmp)
+        try:
+            urllib.request.urlretrieve(url, tmp)
+        except urllib.error.URLError:
+            # python.org Python on a Mac often has no CA certificates installed
+            # (CERTIFICATE_VERIFY_FAILED); curl uses the system's.
+            if not shutil.which("curl"):
+                raise
+            subprocess.run(["curl", "-sSfL", "-o", str(tmp), url], check=True)
         tmp.replace(dst)                      # no half-written model if the download breaks
         print(f"[ok] {dst} ({dst.stat().st_size / 1e6:.1f} MB)")
 

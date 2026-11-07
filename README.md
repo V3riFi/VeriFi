@@ -21,7 +21,7 @@ It is not a truth machine. It shows *when* the subject reacted, *which* signals 
 | Skin conductance | Grove GSR sensor | Sweat response in the seconds after each question |
 | Heart rate | Pulse / SpO2 sensor (finger) | Change from baseline |
 | Breathing | Flex sensor on a chest belt | Breathing rate, breath holding |
-| Face | Webcam + MediaPipe Face Landmarker | Blink rate (Eye Aspect Ratio), hand over face, lip compression |
+| Face | Webcam + MediaPipe Face Landmarker (`openCV/vision`, CV group) | Blink rate (Eye Aspect Ratio), hand over face, lip compression (MediaPipe's mouth-press score). Blinks aren't counted while the head is turned more than 35° or tilted more than 25°, so put the camera at eye level, facing the subject |
 | Voice | Laptop mic + Parselmouth (`voice/live.py`) | Pitch and jitter while the subject talks (shown on the dashboard, not part of stress yet) |
 
 ## How it works
@@ -66,8 +66,10 @@ backend/server.py            FastAPI app + /ws WebSocket, session + question tim
 backend/serial_io.py         serial reader thread
 backend/scoring.py           baseline, live stress indicator, per-question response scoring
 backend/camera.py            webcam capture thread, sends small JPEG frames to the dashboard
-vision/face.py               webcam + MediaPipe face features, imported by the backend (CV group)
-vision/face_landmarker.task  model file, downloaded separately (gitignored)
+backend/face.py              runs the CV group's face engine (openCV/vision) on the camera's frames
+openCV/                      CV group: face engine (vision/), plus the reaction-time identity test that
+                             runs on its own before the interview (see openCV/README.md)
+voice/live.py                live voice features for the backend; voice/analyze.py is the standalone recorder
 frontend/                    Vite + React dashboard (created with npm create vite, see below)
 data/                        recorded sessions (NOT committed, see CONTRIBUTING.md)
 requirements.txt             Python packages (hand-written)
@@ -163,23 +165,13 @@ Then start the frontend in a second terminal.
 
 **Intel Mac?** Run `uname -m`. If it prints `x86_64` on a Mac, `mediapipe==1.2.2` won't install (it only ships Apple Silicon wheels for Mac). The newest version with an Intel Mac wheel is `mediapipe==0.10.21`, which needs Python 3.9-3.12. Install that one by hand instead, and don't change `requirements.txt`.
 
-We use **MediaPipe 1.x**, which does **not** have `mp.solutions` (so `mp.solutions.face_mesh` from older tutorials will fail). Use the Tasks API instead:
+**Face models (once per laptop):** the face features need two model files (about 12 MB) in `openCV/vision/`. From the repo root:
 
-```python
-import mediapipe as mp
-
-BaseOptions = mp.tasks.BaseOptions
-FaceLandmarker = mp.tasks.vision.FaceLandmarker
-FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
-VisionRunningMode = mp.tasks.vision.RunningMode
-
-options = FaceLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path="vision/face_landmarker.task"),
-    running_mode=VisionRunningMode.VIDEO,
-)
+```
+python openCV/download_models.py
 ```
 
-The model file `face_landmarker.task` is downloaded separately: see the Models section linked from the [Face Landmarker Python guide](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/python). Put it in `vision/`.
+Without them the backend still runs, with face features off (the terminal says so).
 
 ### Arduino
 
@@ -226,7 +218,7 @@ Serial port names:
 ```
 
 - `sample`: about 10 per second from the Arduino (20 with fake signals). `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
-  - **Any signal can be `null` or missing**, so draw a gap instead of crashing. `hr`, `spo2` and `temp` are `null` for the first seconds until the pulse sensor locks on, `breath_rate` is `null` for the first ~15 s, and `blink_rate` is missing until vision is connected.
+  - **Any signal can be `null` or missing**, so draw a gap instead of crashing. `hr`, `spo2` and `temp` are `null` for the first seconds until the pulse sensor locks on, `breath_rate` is `null` for the first ~15 s, and `blink_rate` is `null` for the first 10 s of face tracking and whenever no face is in view. `hand_on_face` is `true`/`false`. Face fields are missing if the face models aren't downloaded (see Setup).
   - Voice: `pitch` (Hz), `jitter` and `shimmer` (%) are `null` whenever nobody is talking, so expect gaps between answers. `voice_db` is loudness. All four are missing if the mic isn't working. Set `VERIFI_VOICE=off` to disable the mic, or `VERIFI_VOICE=<device index or name>` to pick one. On a Mac, the terminal running the backend needs microphone permission.
   - `hr` changes in steps (the pulse module recalculates about every 4 s), not as a smooth line.
   - `temp` is in °C (read by the pulse sensor chip). `spo2` is blood oxygen in %.
@@ -252,7 +244,7 @@ Serial port names:
 
 **Errors:** if a control message can't be run (for example `question` while the baseline is still recording), the backend replies to that client only with `{"type": "error", "message": "..."}`. Show it to the interrogator.
 
-**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status`, real webcam `frame`s and live voice features from the laptop mic. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Not connected yet: vision (`blink_rate`) and the hardware question button.
+**What the backend sends right now:** the full session flow above, on real Arduino data (GSR, heart rate, breathing, temperature, oxygen) or fake signals (`VERIFI_FAKE=1`, see Run), plus `status`, real webcam `frame`s and live voice features from the laptop mic. Fake signals react to about half the questions, so spikes show up on the dashboard. Every session is saved to `data/<subject>_<date-time>.csv`. Face features (`blink_rate`, `hand_on_face`, `lip_compression`) come from the real camera, even with `VERIFI_FAKE=1`. Not connected yet: the hardware question button.
 
 ## Wiring (Arduino UNO)
 

@@ -39,6 +39,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend import scoring
 from backend.camera import SEND_FPS, Camera
+from backend.face import FaceTracker
 from backend.serial_io import SerialReader
 from voice.live import VoiceTracker
 
@@ -65,7 +66,8 @@ STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
 VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db"]
-SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "temp", "spo2", *VOICE_KEYS]
+FACE_KEYS = ["blink_rate", "hand_on_face", "lip_compression"]
+SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "temp", "spo2", *FACE_KEYS, *VOICE_KEYS]
 
 clients: set[WebSocket] = set()
 
@@ -272,6 +274,7 @@ class Session:
 session: Session | None = None
 fake = FakeSignals()
 camera = Camera()
+face = FaceTracker(camera)
 voice = VoiceTracker()
 
 
@@ -300,8 +303,8 @@ def status_message() -> dict:
             "pulse": sensor_status("hr", "spo2", "temp"),
             "breathing": sensor_status("flex"),
             "camera": camera.status,
-            # vision/face.py isn't connected yet; fake mode sends a fake blink_rate.
-            "face": "simulated" if FAKE else ("ok" if sensor_status("blink_rate") == "ok" else "off"),
+            # Fake mode sends a fake blink_rate when the real face tracker isn't running.
+            "face": "simulated" if FAKE and face.status != "ok" else face.status,
             "voice": voice.status,
         },
         # Lets a dashboard that reloads mid-session pick the session back up.
@@ -344,11 +347,14 @@ async def handle_sample(sample: dict) -> None:
             breath_history.popleft()
         sample["breath_rate"] = scoring.breath_rate(list(breath_history), BREATH_WINDOW_S)
     sample["type"] = "sample"
+    looks = face.latest()  # real camera, even with VERIFI_FAKE=1; replaces the fake blink_rate
+    if looks:
+        sample.update({k: v if v is None or isinstance(v, bool) else round(v, 3) for k, v in looks.items()})
     features = voice.latest()  # real mic, even with VERIFI_FAKE=1 (like the camera)
     if features:
         sample.update({k: None if v is None else round(v, 2) for k, v in features.items()})
     now = time.time()
-    for key in ("gsr", "hr", "spo2", "temp", "flex", "blink_rate"):
+    for key in ("gsr", "hr", "spo2", "temp", "flex", *FACE_KEYS):
         if sample.get(key) is not None:
             last_seen[key] = now
     events = session.on_sample(sample) if session else []
@@ -391,6 +397,7 @@ async def serial_loop(queue: asyncio.Queue) -> None:
 async def lifespan(app: FastAPI):
     global serial_reader
     camera.start()
+    face.start()
     voice.start()
     if FAKE:
         print("source: FAKE signals (VERIFI_FAKE=1)", flush=True)
@@ -407,6 +414,7 @@ async def lifespan(app: FastAPI):
     yield
     for task in tasks:
         task.cancel()
+    face.stop()
     camera.stop()
     voice.stop()
     if serial_reader:

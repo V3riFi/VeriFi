@@ -9,12 +9,12 @@ Imported by the backend, which runs it in a background thread (like vision/face.
     voice.status       # "ok" | "missing" | "off"
     voice.stop()
 
-Uses the same Praat measurements as voice/audio/analyze.py (the standalone recorder), but
+Uses the same Praat measurements as voice/analyze.py (the standalone recorder), but
 works on audio in memory: every UPDATE_S it analyzes the last WINDOW_S seconds of
 the mic. Jitter and shimmer need several vocal-fold cycles, so a 1 s sliding window
 is steadier than separate 0.2 s chunks.
 
-Only the backend opens the mic while it runs. Don't run voice/audio/analyze.py at the same time.
+Only the backend opens the mic while it runs. Don't run voice/analyze.py at the same time.
 
 Env variable:
   VERIFI_VOICE  input device index or name (default: system default mic), or "off"
@@ -33,7 +33,7 @@ import numpy as np
 SAMPLE_RATE = 16000     # plenty for speech pitch, and cheaper to analyze than 44.1 kHz
 WINDOW_S = 1.0          # audio analyzed each update
 UPDATE_S = 0.2          # how often features are recomputed
-PITCH_FLOOR = 75        # Hz, the same 75-500 Hz search range as voice/audio/analyze.py
+PITCH_FLOOR = 75        # Hz, the same 75-500 Hz search range as voice/analyze.py
 PITCH_CEILING = 500
 MIN_VOICED_S = 0.15     # less voiced audio than this in the window = not speaking
 REOPEN_EVERY_S = 5.0
