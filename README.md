@@ -167,6 +167,39 @@ Serial port names:
 - Mac: `/dev/cu.usbmodem...`
 - Linux: `/dev/ttyACM0` (or `/dev/ttyUSB0` on some clone boards)
 
+## WebSocket contract (backend <-> frontend)
+
+`ws://localhost:8000/ws`, one JSON object per message. Every message has a `type`.
+
+**Backend -> frontend:**
+
+```
+{"type": "sample", "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "blink_rate": 18}
+{"type": "trial",  "t": 1240.0, "round": 1, "item": "knife", "phase": "start"}
+{"type": "trial",  "t": 1250.0, "round": 1, "item": "knife", "phase": "end"}
+{"type": "result", "scores": {"knife": 1.8, "rope": 0.2, "gun": -0.3, "bat": 0.1, "poison": -0.4}, "pick": "knife"}
+```
+
+- `sample`: about 20 per second. `t` is laptop time in seconds (Unix time).
+- `trial`: sent when an item appears on screen (`start`) and when its window ends (`end`). The frontend shows `item` large while a trial is running.
+- `result`: sent once at the end of a session. One score per item, highest = `pick`.
+
+**Frontend -> backend** (starts a CIT session):
+
+```
+{"type": "start", "subject": "subject04", "truth": "knife"}
+```
+
+`truth` is only written to the session's CSV for measuring accuracy, never used for scoring. Leave it empty during the live demo.
+
+**Rules:**
+
+- The backend owns all timing. The frontend only displays what it's told.
+- Add fields freely. Don't rename or remove existing ones without telling everyone.
+- Unknown `type` values should be ignored, not crash the frontend.
+
+**What the backend sends right now:** fake `sample` messages only (`uvicorn backend.server:app --port 8000`). Fake `trial`/`result` messages for a session are coming next. Until then, the frontend can mock them locally to build the CIT and results screens.
+
 ## Wiring (Arduino UNO)
 
 | Part | Arduino pin |
