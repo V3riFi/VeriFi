@@ -31,6 +31,36 @@ HOLD_FRACTION = 0.3
 NORMAL_PAUSE_S = 1.0
 
 
+MIN_BREATH_WINDOW_S = 15.0  # need this much flex history before reporting a breathing rate
+MIN_BREATH_SWING = 2.0      # ADC units; smaller wiggles are noise, not breaths
+
+
+def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | None:
+    """Breaths per minute from (t, flex) pairs covering the last window_s seconds.
+
+    Removes slow drift (the belt shifting), then counts upward crossings with a
+    dead band so noise doesn't count as breaths. None until there's enough data
+    or if fewer than 2 breaths were seen (e.g. a long hold).
+    """
+    if len(history) < 10 or history[-1][0] - history[0][0] < MIN_BREATH_WINDOW_S:
+        return None
+    t = np.array([h[0] for h in history])
+    x = np.array([h[1] for h in history])
+    x = x - np.polyval(np.polyfit(t - t[0], x, 1), t - t[0])
+    band = max(0.3 * float(x.std()), MIN_BREATH_SWING)
+    rises, state = [], None
+    for ti, xi in zip(t, x):
+        if xi > band and state != "high":
+            if state == "low":
+                rises.append(ti)
+            state = "high"
+        elif xi < -band:
+            state = "low"
+    if len(rises) < 2:
+        return None
+    return round(float((len(rises) - 1) / (rises[-1] - rises[0]) * 60), 1)
+
+
 def column(samples: list[dict], key: str) -> np.ndarray:
     """Values of one signal as floats. Missing values (None, negative, hr of 0) become NaN."""
     out = np.full(len(samples), np.nan)

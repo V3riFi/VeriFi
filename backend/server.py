@@ -6,11 +6,14 @@ Owns the WebSocket at /ws (see "WebSocket contract" in README): runs the
 interrogation session (baseline -> questions -> responses -> summary),
 adds the live stress indicator to samples, and logs every session to data/.
 
-Signals are FAKE for now (FakeSignals), so the frontend can be built before the
-hardware works. Fake GSR/HR/breathing react to some questions so spikes show up.
-Real serial/vision data replaces FakeSignals later.
+Data source:
+  - default: the Arduino over USB serial (backend/serial_io.py), auto-detected
+  - VERIFI_FAKE=1: fake signals, no hardware needed. Fake GSR/HR/breathing
+    react to about half the questions so spikes show up.
 
 Env variables:
+  VERIFI_FAKE        1 = fake signals instead of the Arduino
+  VERIFI_PORT        serial port, if auto-detect picks the wrong one
   VERIFI_BASELINE_S  length of the baseline period in seconds (default 60; use 10 while testing)
 """
 
@@ -30,12 +33,15 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend import scoring
+from backend.serial_io import SerialReader
 
-SAMPLE_HZ = 20
+FAKE = os.environ.get("VERIFI_FAKE", "") not in ("", "0")
+SAMPLE_HZ = 20  # fake signals only; the Arduino sends at its own rate (10 Hz)
 BASELINE_S = float(os.environ.get("VERIFI_BASELINE_S", "60"))
-STRESS_SMOOTHING = 0.1  # 0-1, lower = smoother live stress
+STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
+BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
-SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate"]
+SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "temp", "spo2"]
 
 clients: set[WebSocket] = set()
 
@@ -134,7 +140,7 @@ class Session:
         self.baseline_end = now + BASELINE_S
         self.baseline: scoring.Baseline | None = None
         self.samples: list[dict] = []
-        self.recent: deque[dict] = deque(maxlen=int(scoring.STRESS_WINDOW_S * SAMPLE_HZ))
+        self.recent: deque[dict] = deque()  # last STRESS_WINDOW_S seconds
         self.stress: float | None = None
         self.questions: list[dict] = []  # {"label", "t", "spike", "signals", "done"}
         self.log = SessionLog(subject, now)
@@ -163,6 +169,8 @@ class Session:
         t = sample["t"]
         self.samples.append(sample)
         self.recent.append(sample)
+        while self.recent[0]["t"] < t - scoring.STRESS_WINDOW_S:
+            self.recent.popleft()
         events = []
 
         if self.baseline is None and t >= self.baseline_end:
@@ -210,24 +218,56 @@ async def broadcast(message: dict) -> None:
             clients.discard(ws)
 
 
-async def sample_loop() -> None:
+breath_history: deque[tuple[float, float]] = deque()  # (t, flex) for breathing rate
+serial_reader: SerialReader | None = None
+
+
+async def handle_sample(sample: dict) -> None:
+    """Every sample, fake or real, goes through here: breathing rate, session, broadcast."""
+    if sample.get("breath_rate") is None and sample.get("flex") is not None:
+        breath_history.append((sample["t"], sample["flex"]))
+        while breath_history[0][0] < sample["t"] - BREATH_WINDOW_S:
+            breath_history.popleft()
+        sample["breath_rate"] = scoring.breath_rate(list(breath_history), BREATH_WINDOW_S)
+    sample["type"] = "sample"
+    events = session.on_sample(sample) if session else []
+    await broadcast(sample)
+    for event in events:
+        await broadcast(event)
+
+
+async def fake_loop() -> None:
     period = 1 / SAMPLE_HZ
     next_tick = time.monotonic()
     while True:
-        sample = fake.sample()
-        events = session.on_sample(sample) if session else []
-        await broadcast(sample)
-        for event in events:
-            await broadcast(event)
+        await handle_sample(fake.sample())
         next_tick += period
         await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
 
 
+async def serial_loop(queue: asyncio.Queue) -> None:
+    while True:
+        await handle_sample(await queue.get())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(sample_loop())
+    global serial_reader
+    if FAKE:
+        print("source: FAKE signals (VERIFI_FAKE=1)", flush=True)
+        task = asyncio.create_task(fake_loop())
+    else:
+        print("source: Arduino over serial (set VERIFI_FAKE=1 for fake signals)", flush=True)
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        # The reader runs in its own thread; hand each sample to the event loop safely.
+        serial_reader = SerialReader(lambda s: loop.call_soon_threadsafe(queue.put_nowait, s))
+        serial_reader.start()
+        task = asyncio.create_task(serial_loop(queue))
     yield
     task.cancel()
+    if serial_reader:
+        serial_reader.stop()
     if session:
         session.log.close()
 
@@ -239,6 +279,8 @@ app = FastAPI(lifespan=lifespan)
 def health() -> dict:
     return {
         "ok": True,
+        "source": "fake" if FAKE else "serial",
+        "serial": None if FAKE or not serial_reader else {"port": serial_reader.port, "connected": serial_reader.connected},
         "clients": len(clients),
         "session": None if session is None else {
             "subject": session.subject,
@@ -267,7 +309,8 @@ async def handle(message: dict) -> str | None:
             return "Still recording the baseline. Wait for it to finish."
         label = str(message.get("label") or session.next_label())
         await broadcast(session.ask(now, label, message.get("text"), message.get("stimulus")))
-        fake.react(now)
+        if FAKE:
+            fake.react(now)
 
     elif kind == "stop":
         if not session:
