@@ -27,7 +27,7 @@ Both lines from `git remote -v` should show `V3riFi/VeriFi`. If you haven't clon
 |---|---|
 | `firmware/` | Hardware team |
 | `vision/` | Aagrim, Cohen |
-| `backend/` | Matthew |
+| `backend/` | Matthew, Aaryan |
 | `frontend/` | Aaryan, Matthew |
 | `README.md`, `requirements.txt` | Anyone, but say so in the group chat |
 

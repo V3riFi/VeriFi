@@ -14,7 +14,7 @@ It is not a truth machine. It shows *which* signals reacted and by how much, so 
 | Heart rate | Pulse / SpO2 sensor (finger) | Change from baseline |
 | Breathing | Flex sensor on a chest belt | Breathing rate, breath holding |
 | Face | Webcam + MediaPipe Face Landmarker | Blink rate (Eye Aspect Ratio), hand over face, lip compression |
-| Voice (stretch goal) | Laptop mic + Parselmouth | Pitch and jitter |
+| Voice (cut for now, maybe Sunday) | Laptop mic + Parselmouth | Pitch and jitter |
 
 ## How it works
 
@@ -38,7 +38,7 @@ Everything runs locally on one laptop. No cloud, no database, no Docker.
 | Backend | Python, FastAPI + uvicorn, **one process** |
 | Serial | `pyserial`, background thread |
 | Vision | `opencv-python` + `mediapipe` (Tasks API), background thread in the backend process |
-| Voice (stretch goal) | `sounddevice` + `praat-parselmouth` |
+| Voice (cut for now, maybe Sunday) | `sounddevice` + `praat-parselmouth` |
 | Scoring | `numpy` (z-scores against each person's baseline, no model training) |
 | Storage | CSV files in `data/` |
 | Frontend | Vite + React, charts with uPlot or Chart.js |
@@ -49,17 +49,18 @@ Two rules:
 - **Only the backend opens the webcam and the serial port.** Both can only be used by one program at a time. If the frontend needs video, the backend sends small JPEG frames over the WebSocket.
 - **Serial and vision run in the same Python process**, so every signal shares one clock and lines up in time.
 
-## Planned repo layout
-
-> The repo currently has empty placeholder files in the root. This is the layout we're moving to.
+## Repo layout
 
 ```
-firmware/verifi/verifi.ino   Arduino sketch, streams all sensors over serial
-backend/                     serial reader, buffers, CSV logging, scoring, WebSocket server
-vision/                      webcam + MediaPipe face features (imported by the backend, not run on its own)
-frontend/                    Vite + React dashboard
+firmware/verifi/verifi.ino   Arduino sketch, streams all sensors over serial (hardware team)
+backend/server.py            FastAPI app + /ws WebSocket, CIT session timing, CSV logging (entry point)
+backend/serial_io.py         serial reader thread
+backend/scoring.py           CIT scoring
+vision/face.py               webcam + MediaPipe face features, imported by the backend (CV group)
+vision/face_landmarker.task  model file, downloaded separately (gitignored)
+frontend/                    Vite + React dashboard (created with npm create vite, see below)
 data/                        recorded sessions (NOT committed, see CONTRIBUTING.md)
-requirements.txt             pinned Python packages
+requirements.txt             Python packages (hand-written)
 ```
 
 ## Setup
@@ -121,15 +122,15 @@ npm run dev
 
 Opens at http://localhost:5173.
 
-### Run (once the backend exists)
+### Run
 
-From the repo root, with the venv active:
+From the repo root (not from inside `backend/`), with the venv active:
 
 ```
 uvicorn backend.server:app --port 8000
 ```
 
-Then start the frontend in a second terminal. `backend/server.py` with a FastAPI `app` is the planned entry point; update this line if the file ends up named differently.
+Then start the frontend in a second terminal.
 
 ### MediaPipe note
 
@@ -190,8 +191,8 @@ Serial port names:
 
 | Name | Area |
 |---|---|
-| Aaryan | Frontend |
-| Matthew | Backend |
+| Aaryan | Software: frontend, backend |
+| Matthew | Software: backend, frontend |
 | Aagrim | Computer vision |
 | Cohen | Computer vision |
 | _____ | Hardware |
