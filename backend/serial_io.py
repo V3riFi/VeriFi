@@ -1,20 +1,13 @@
-"""
-READ ME:
-
-THIS CODE MAKES A DIRECTORY CALLED LOGS. INSIDE OF THE LOGS ARE THE DATA
-
-
-Reads the Arduino over serial in a background thread.
-
-Parses EVT:HELLO / EVT:DATA / EVT:BUTTON lines (see "Serial protocol" in README)
-and timestamps each sample with laptop time on arrival.
-Port comes from the VERIFI_PORT env variable, or is auto-detected.
-"""
 #!/usr/bin/env python3
+
+# INSTALL: pip install pyserial matplotlib (into a venv)
+
+# NOTICE: for gsr_213703.csv, I started touching it at around line 117, so the gsr_raw values strted spiking at around those lines
+
 """
 serial_io.py — GSR sensor serial reader, live plot, and CSV logger.
 
-Matches Arduino sketch:
+Matches Arduino code/firmware. Haven't uploaded that yet:
     Serial.begin(9600);
     Serial.println(gsrAverage);   # one integer per line
 
@@ -34,15 +27,15 @@ import serial
 import matplotlib.pyplot as plt
 
 
-# ----------------------------- Configuration -----------------------------
+# CONFIG
 
-DEFAULT_PORT = "/dev/ttyACM0"
+DEFAULT_PORT = "/dev/ttyACM0" # this is the port that the Arduino connects to through the USB
 DEFAULT_BAUD = 9600
 MAX_POINTS   = 300          # how many recent samples to show on the plot
 LOG_DIR      = Path("logs") # CSV logs go here
 
 
-# ----------------------------- Serial helpers ----------------------------
+# SERIAL HELPERS
 
 def open_serial(port: str, baud: int, timeout: float = 1.0) -> serial.Serial:
     """Open the serial port with a timeout so readline() never blocks forever."""
@@ -62,14 +55,14 @@ def read_value(ser: serial.Serial):
         return None
 
 
-# ----------------------------- Main loop ---------------------------------
+# main loop
 
 def run(port: str, baud: int, log_path: Path) -> None:
     ser = open_serial(port, baud)
     print(f"Connected to {port} @ {baud} baud. Logging to {log_path}")
     print("Press Ctrl+C to stop.\n")
 
-    buffer = deque(maxlen=MAX_POINTS)
+    buffer = deque(maxlen=MAX_POINTS) # deque is just a buffer that lets you access end and start points easier
 
     plt.ion()
     fig, ax = plt.subplots()
