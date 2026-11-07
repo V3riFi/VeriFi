@@ -95,13 +95,13 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
               ├──────────────────┴─────────────┘
               │
    ┌──────────▼──────────────────────────────────────────────┐
-   │  PYTHON BACKEND — one process, one clock                 │
-   │                                                          │
-   │  inputs    serial_io.py · camera.py · voice/live.py      │
-   │  vision    face.py  (MediaPipe on camera frames)         │
-   │  scoring   scoring.py  (baseline + per-signal z-scores)  │
-   │  outputs   server.py → WebSocket JSON · data/*.csv       │
-   └─────────────────────────────┬────────────────────────────┘
+   │  PYTHON BACKEND — one process, one clock                │
+   │                                                         │
+   │  inputs    serial_io.py · camera.py · voice/live.py     │
+   │  vision    face.py  (MediaPipe on camera frames)        │
+   │  scoring   scoring.py  (baseline + per-signal z-scores) │
+   │  outputs   server.py → WebSocket JSON · data/*.csv      │
+   └─────────────────────────────┬───────────────────────────┘
                                  │ WebSocket JSON · ~20/s
    ┌─────────────────────────────▼────────────────────────────┐
    │  FRONTEND — Vite + React                                 │
@@ -196,14 +196,6 @@ python3 openCV/download_models.py
 Without them the backend still runs, with face features off.
 
 ### 5. Frontend dependencies
-
-First time only (whoever sets up the frontend):
-
-```bash
-npm create vite@latest frontend -- --template react
-```
-
-Everyone else:
 
 ```bash
 cd frontend
