@@ -69,8 +69,11 @@ requirements.txt             pinned Python packages
 ```
 git clone https://github.com/V3riFi/VeriFi.git
 cd VeriFi
+git config core.hooksPath .githooks
 python -m venv .venv
 ```
+
+`git config core.hooksPath .githooks` turns on the repo's commit-message hook. Run it once per clone.
 
 Activate it:
 
@@ -130,6 +133,8 @@ Then start the frontend in a second terminal. `backend/server.py` with a FastAPI
 
 ### MediaPipe note
 
+**Intel Mac?** Run `uname -m`. If it prints `x86_64` on a Mac, `mediapipe==1.2.2` won't install (it only ships Apple Silicon wheels for Mac). The newest version with an Intel Mac wheel is `mediapipe==0.10.21`, which needs Python 3.9-3.12. Install that one by hand instead, and don't change `requirements.txt`.
+
 We use **MediaPipe 1.x**, which does **not** have `mp.solutions` (so `mp.solutions.face_mesh` from older tutorials will fail). Use the Tasks API instead:
 
 ```python
@@ -186,7 +191,7 @@ Serial port names:
 | Name | Area |
 |---|---|
 | Aaryan | Frontend |
-| Matthew | Frontend / backend |
+| Matthew | Backend |
 | Aagrim | Computer vision |
 | Cohen | Computer vision |
 | _____ | Hardware |
