@@ -17,6 +17,8 @@ Changes from the previous version:
     Defaults preserve the old standalone behaviour.
   - record_chunks is imported lazily inside record() so the module can be
     imported without the recorder dependency (needed for live.py).
+  - Missing/NaN measurements are written to JSON as 0 instead of null,
+    so downstream code never has to handle null.
 """
 
 import parselmouth
@@ -27,7 +29,7 @@ import json
 import time
 
 from pathlib import Path
-import numpy as np                              # NEW: for array input
+import numpy as np                              # for array input
 
 # ---- Paths and settings ------------------------------------------------------
 cwd = Path(__file__).resolve().parent
@@ -74,12 +76,13 @@ def extract_features(
     include_pauses=True,          # live use: False (needs whole file)
     pitch_floor=75.0,
     pitch_ceiling=500.0,
-    min_voiced_s=0.0,             # live use: 0.15 (return None on silence)
+    min_voiced_s=0.0,             # live use: 0.15 (return zeros on silence)
     loudness_window_s=None,       # live use: 0.2 (reactive loudness)
 ):
     """Analyze one audio file OR an in-memory numpy array.
 
     Returns a dict of voice features, or None for audio too short to analyze.
+    Missing/NaN measurements come back as 0.0, not None.
     Defaults reproduce the previous standalone behaviour; live.py passes
     flags to skip the expensive parts.
     """
@@ -111,9 +114,9 @@ def extract_features(
     # Silence sentinel (only when min_voiced_s > 0 — preserves old behaviour otherwise)
     if min_voiced_s > 0 and voiced_duration < min_voiced_s:
         return {
-            "pitch_mean": None, "pitch_min": None, "pitch_max": None,
-            "intensity_mean": intensity_mean,
-            "jitter": None, "shimmer": None, "harmonicity": None,
+            "pitch_mean": 0.0, "pitch_min": 0.0, "pitch_max": 0.0,
+            "intensity_mean": intensity_mean,   # real dB value, even when silent
+            "jitter": 0.0, "shimmer": 0.0, "harmonicity": 0.0,
             "data_points": [], "pauses": [],
         }
 
@@ -173,14 +176,17 @@ def process_audio_files(directory):
     return features_list
 
 
-def _nan_to_none(value):
-    """Praat gives NaN for silence; JSON has no NaN, so write null instead."""
+def _nan_to_zero(value):
+    """Praat gives NaN for silence and we may emit None for missing data;
+    JSON has neither, so write 0 instead."""
+    if value is None:
+        return 0
     if isinstance(value, float) and math.isnan(value):
-        return None
+        return 0
     if isinstance(value, dict):
-        return {k: _nan_to_none(v) for k, v in value.items()}
+        return {k: _nan_to_zero(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_nan_to_none(v) for v in value]
+        return [_nan_to_zero(v) for v in value]
     return value
 
 
@@ -191,7 +197,7 @@ def analyze_chunks(path):
         return
     data.pop("data_points", None)
     with open(cwd / "outputs" / "temp" / f"{Path(path).stem}.json", "w") as json_file:
-        json.dump(_nan_to_none(data), json_file, indent=4)
+        json.dump(_nan_to_zero(data), json_file, indent=4)
 
 
 def record(filename):
@@ -225,7 +231,7 @@ def stop_recording(rec):
     features_list = extract_features(path)
     filepath = cwd / "outputs" / "final" / f"{time.time()}.json"
     with open(filepath, "w") as json_file:
-        json.dump(_nan_to_none(features_list), json_file, indent=4)
+        json.dump(_nan_to_zero(features_list), json_file, indent=4)
     return filepath
 
 
