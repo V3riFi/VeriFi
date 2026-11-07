@@ -104,8 +104,8 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
                                      │ WebSocket JSON, ~20/s
                                      ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │  Frontend (Vite + React)                                     │
-  │  live charts · stress indicator · question timeline           │
+  │  Frontend (Vite + React)                                    │
+  │  live charts · stress indicator · question timeline         │
   └─────────────────────────────────────────────────────────────┘
 ```
 
