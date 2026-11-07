@@ -4,8 +4,6 @@
 
 A multimodal **suspicion detector** for interrogations. The interrogator asks questions and can show objects or crime-scene images; the suspect answers normally. VeriFi watches the subject's body and shows a live stress indicator plus which signals spiked after each question, compared against that person's own calm baseline.
 
-**It is not a truth machine.** It shows *when* the subject reacted, *which* signals reacted, and by how much. The interrogator makes the call. See [Limitations](#limitations).
-
 ---
 
 ## Quick run
