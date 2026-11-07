@@ -61,7 +61,7 @@ Two rules:
 ## Repo layout
 
 ```
-firmware/verifi/verifi.ino   Arduino sketch, streams all sensors over serial (hardware team)
+firmware/verifi/sensors/     Arduino sketch (sensors.ino), streams all sensors over serial (hardware team)
 backend/server.py            FastAPI app + /ws WebSocket, session + question timing, CSV logging (entry point)
 backend/serial_io.py         serial reader thread
 backend/scoring.py           baseline, live stress indicator, per-question response scoring
@@ -222,7 +222,7 @@ Serial port names:
 
 - `sample`: about 10 per second from the Arduino (20 with fake signals). `t` is laptop time in seconds (Unix time). `stress` is the live indicator, 0 to 100 (0 = at baseline). It only appears once the baseline is done.
   - **Any signal can be `null` or missing**, so draw a gap instead of crashing. `hr`, `spo2` and `temp` are `null` for the first seconds until the pulse sensor locks on, `breath_rate` is `null` for the first ~15 s, and `blink_rate` is missing until vision is connected.
-  - `hr` from the pulse sensor only updates about every 4 s, so it looks like steps, not a smooth line.
+  - `hr` changes in steps (the pulse module recalculates about every 4 s), not as a smooth line.
   - `temp` is in °C (read by the pulse sensor chip). `spo2` is blood oxygen in %.
 - `baseline`: when baseline recording starts and finishes. The dashboard shows a "stay still, recording baseline" state in between.
 - `question`: the backend's timestamped echo of a question starting. The dashboard puts a marker on the timeline here.
@@ -262,15 +262,15 @@ Serial port names:
 ```
 STATUS: starting
 STATUS: MAX30102 ready
-breath: 512, gsr: 480, heartbeat: 72, Blood Pressure: 98, temp: 31.5
+breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
 ```
 
 | Field | Meaning |
 |---|---|
 | `breath` | Flex sensor on the chest belt, raw ADC (0-1023). The backend calls it `flex` and works out `breath_rate` from it |
 | `gsr` | Skin conductance, raw ADC (0-1023) |
-| `heartbeat` | BPM from the pulse module, refreshed every 4 s and averaged on the board. `0` = no reading yet |
-| `Blood Pressure` | Actually **blood oxygen (SpO2 %)**, mislabelled in the sketch. The backend also accepts `spo2:` here |
+| `heartbeat` | BPM from the pulse module. The module recalculates about every 4 s; the board polls it every 1 s and averages the last 2 readings. `0` = no reading yet |
+| `spo2` | Blood oxygen (%). Older versions of the sketch labelled it `Blood Pressure:`, which the backend still accepts |
 | `temp` | °C from the pulse module chip |
 
 `STATUS:` lines are printed in the backend terminal and otherwise ignored. If you change the line format, update `LINE_RE` in `backend/serial_io.py` in the same commit.
