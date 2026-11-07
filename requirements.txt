@@ -6,3 +6,4 @@ mediapipe==1.2.2
 numpy
 sounddevice
 praat-parselmouth
+matplotlib
