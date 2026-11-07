@@ -16,6 +16,11 @@ Matches firmware/verifi/sensors (10 Hz, one labeled line per sample):
 The sketch currently prints "Blood Pressure:" instead of "spo2:" for the
 oxygen value; both are accepted. Lines starting with "STATUS:" are printed, not parsed.
 
+Heart rate is passed through a median-of-3 filter over *distinct* sensor
+readings before being reported. This rejects single-window misdetections
+(missed beats, double-counted dicrotic notches) that otherwise show up as
+40 BPM jumps even when the actual rate is steady. See HRFilter for details.
+
 Port: VERIFI_PORT env variable, or --port, or auto-detected.
 """
 
@@ -30,6 +35,7 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 from typing import Callable
 
 import serial
@@ -46,6 +52,48 @@ LINE_RE = re.compile(
     rf"\s*(?:spo2|blood pressure):\s*{NUM},\s*temp:\s*{NUM}",
     re.IGNORECASE,
 )
+
+
+# ----------------------------- Heart-rate filter ----------------------------
+
+
+class HRFilter:
+    """Median-of-3 filter over *distinct* heart-rate readings.
+
+    Why distinct readings and not every 10 Hz sample: the DFRobot module only
+    produces a new HR value every ~4 s, so the same number arrives in ~40
+    consecutive serial lines. A 3-point median over the 10 Hz stream would
+    therefore always see [x, x, x] — useless. Instead we count each *new*
+    value from the sensor once, and take the median of the last N distinct
+    readings. A single bad window (72, 160, 72) then resolves to 72, while a
+    real sustained change (72, 73, 74) still comes through with ~8 s of lag.
+
+    Missing readings (None) are passed through untouched so the plot shows an
+    honest gap, and they don't pollute the history. During warm-up (fewer than
+    N distinct readings seen), the raw value is passed through.
+    """
+
+    def __init__(self, n: int = 3) -> None:
+        # Force odd window so median() returns an observed value, not an average.
+        self.n = n if n % 2 == 1 else n + 1
+        self.history: deque[float] = deque(maxlen=self.n)
+        self.last_raw: float | None = None
+
+    def update(self, raw: float | None) -> float | None:
+        if raw is None:
+            return None                      # real missing data -> gap in plot
+        if raw == self.last_raw:
+            return self._current()           # no new sensor reading, hold filtered
+        self.last_raw = raw
+        self.history.append(raw)
+        return self._current()
+
+    def _current(self) -> float | None:
+        if not self.history:
+            return None
+        if len(self.history) < self.n:
+            return self.last_raw             # warm-up: pass raw through
+        return float(median(self.history))
 
 
 # ----------------------------- Parsing / ports -----------------------------
@@ -133,6 +181,7 @@ class SerialReader(threading.Thread):
 
     Each sample gets "t" = laptop time when the line arrived, so it lines up
     with questions and vision. Reconnects automatically if the cable is pulled.
+    Heart rate is median-filtered before being reported.
     """
 
     def __init__(self, on_sample: Callable[[dict], None], baud: int = DEFAULT_BAUD, opener=open_serial) -> None:
@@ -143,6 +192,7 @@ class SerialReader(threading.Thread):
         self.stopped = threading.Event()
         self.connected = False
         self.port: str | None = None
+        self.hr_filter = HRFilter()
 
     def stop(self) -> None:
         self.stopped.set()
@@ -179,6 +229,7 @@ class SerialReader(threading.Thread):
                         continue
                     sample = parse_line(raw)
                     if sample is not None:
+                        sample["hr"] = self.hr_filter.update(sample["hr"])
                         self.on_sample({"t": round(time.time(), 3), **sample})
             except (serial.SerialException, OSError) as e:
                 print(f"serial: lost connection ({e}). Reconnecting...", flush=True)
@@ -202,6 +253,7 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
     print("Press Ctrl+C to stop.\n")
 
     bufs = {k: deque(maxlen=MAX_POINTS) for k in ("gsr", "flex", "hr")}
+    hr_filter = HRFilter()
 
     plt.ion()
     fig, (ax_gsr, ax_breath, ax_hr) = plt.subplots(3, 1, figsize=(10, 7), sharex=True)
@@ -231,6 +283,7 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
             s = parse_line(raw)
             if s is None:
                 continue
+            s["hr"] = hr_filter.update(s["hr"])
             now = time.time()
             writer.writerow([datetime.fromtimestamp(now).isoformat(), now, s["flex"], s["gsr"], s["hr"], s["spo2"], s["temp"]])
             csv_file.flush()
