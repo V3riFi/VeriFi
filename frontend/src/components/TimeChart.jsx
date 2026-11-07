@@ -84,6 +84,17 @@ function drawUnderlay(u, view) {
     smallText(ctx)
     ctx.fillStyle = c.label
     if (ctx.measureText('Baseline').width + 8 * px < x1 - x0) ctx.fillText('Baseline', x0 + 4 * px, top + 4 * px)
+
+    if (session.voice) {
+      const v0 = u.valToPos(session.voice.startT, 'x', true)
+      const vEnd = session.voice.done ? session.voice.endT : Math.min(session.voice.endT, u.scales.x.max)
+      const v1 = u.valToPos(vEnd, 'x', true)
+      ctx.fillStyle = c.band
+      ctx.fillRect(v0, top, v1 - v0, height)
+      ctx.fillStyle = c.label
+      const text = 'Voice baseline'
+      if (ctx.measureText(text).width + 8 * px < v1 - v0) ctx.fillText(text, v0 + 4 * px, top + 4 * px)
+    }
   }
 
   if (thresholds) {

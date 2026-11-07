@@ -8,3 +8,5 @@ logs/
 .env
 node_modules/
 .DS_Store
+voice/audio/audio/
+voice/audio/outputs/

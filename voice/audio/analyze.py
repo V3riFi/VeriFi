@@ -77,9 +77,13 @@ def extract_features(audio_file):
     harmonicity (HNR), pauses.
     Also includes `data_points`: the same measures (except min/max) for each
     consecutive `datapoint_interval`-second window.
-    Unvoiced/silent stretches can give NaN for pitch, jitter, shimmer and HNR.
+    Unvoiced/silent stretches can give NaN for pitch, jitter, shimmer and HNR
+    (written to the JSON files as null). Returns None for audio too short to analyze.
     """
     sound = parselmouth.Sound(audio_file)
+    if sound.duration < 0.05:
+        # The last chunk at stop can be a few samples long; Praat can't analyze that.
+        return None
     pitch = sound.to_pitch()            # fundamental frequency (F0) over time
     intensity = sound.to_intensity()    # loudness (dB) over time
 
@@ -165,6 +169,16 @@ def process_audio_files(directory):
 
     return features_list
 
+def _nan_to_none(value):
+    """Praat gives NaN for silence; JSON has no NaN, so write null instead."""
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _nan_to_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_nan_to_none(v) for v in value]
+    return value
+
 def analyze_chunks(path):
     """Callback for ChunkRecorder: runs once for each finished chunk.
 
@@ -172,13 +186,15 @@ def analyze_chunks(path):
     outputs/temp/<chunk name>.json.
     """
     data = extract_features(path)
+    if data is None:
+        return
 
     # Chunk files don't need per-window data points (the chunk-level values already
     # cover the whole chunk), so leave them out. The final full-recording JSON keeps them.
     data.pop("data_points", None)
 
     with open(cwd / "outputs" / "temp" / f"{Path(path).stem}.json", "w") as json_file:
-        json.dump(data, json_file, indent=4)
+        json.dump(_nan_to_none(data), json_file, indent=4)
 
 def record(filename):
     """Start recording in the background and return the recorder.
@@ -222,7 +238,7 @@ def stop_recording(rec):
     filepath = cwd / "outputs" / "final" / f"{time.time()}.json"
 
     with open(filepath, "w") as json_file:
-        json.dump(features_list, json_file, indent=4)
+        json.dump(_nan_to_none(features_list), json_file, indent=4)
 
     return filepath
 

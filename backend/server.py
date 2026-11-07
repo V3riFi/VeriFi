@@ -15,7 +15,9 @@ Env variables:
   VERIFI_FAKE        1 = fake signals instead of the Arduino
   VERIFI_PORT        serial port, if auto-detect picks the wrong one
   VERIFI_BASELINE_S  length of the baseline period in seconds (default 60; use 10 while testing)
+  VERIFI_VOICE_BASELINE_S  length of the voice baseline that follows it (default 25; 0 skips it)
   VERIFI_CAMERA      webcam index (default 0), or "off" (see backend/camera.py)
+  VERIFI_VOICE       mic device index or name (default: system mic), or "off" (see voice/live.py)
 """
 
 from __future__ import annotations  # allows "str | None" hints on Python 3.9
@@ -38,16 +40,32 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from backend import scoring
 from backend.camera import SEND_FPS, Camera
 from backend.serial_io import SerialReader
+from voice.live import VoiceTracker
 
 FAKE = os.environ.get("VERIFI_FAKE", "") not in ("", "0")
 SAMPLE_HZ = 20  # fake signals only; the Arduino sends at its own rate (10 Hz)
 STATUS_EVERY_S = 1.0
 SENSOR_STALE_S = 5.0  # a sensor with no value for this long shows as missing
 BASELINE_S = float(os.environ.get("VERIFI_BASELINE_S", "60"))
+VOICE_BASELINE_S = float(os.environ.get("VERIFI_VOICE_BASELINE_S", "25"))
+# Read aloud during the voice baseline. Neutral and true for anyone, so they set the
+# subject's normal pitch and jitter while speaking. The counting gives steady voicing.
+VOICE_SENTENCES = [
+    "I am sitting in a chair right now.",
+    "There are seven days in a week.",
+    "The sky is blue on a clear day.",
+    "Water is wet and fire is hot.",
+    "One, two, three, four, five, six, seven, eight, nine, ten.",
+]
+# The mic also hears the room (other people talking, fans). The silent baseline
+# measures the room's loudness; after it, voice only counts as the subject speaking
+# when it's this much louder. TUNE: raise it if background chatter still gets through.
+SPEECH_MARGIN_DB = 6.0
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
-SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "temp", "spo2"]
+VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db"]
+SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "temp", "spo2", *VOICE_KEYS]
 
 clients: set[WebSocket] = set()
 
@@ -145,12 +163,28 @@ class Session:
         self.started = now
         self.baseline_end = now + BASELINE_S
         self.baseline: scoring.Baseline | None = None
+        # Voice baseline (after the silent one): start/end time, None if skipped or not reached yet.
+        self.voice_start: float | None = None
+        self.voice_end: float | None = None
+        self.voice_done = False
+        self.room_db: float | None = None  # median mic loudness during the silent baseline
         self.samples: list[dict] = []
         self.recent: deque[dict] = deque()  # last STRESS_WINDOW_S seconds
         self.stress: float | None = None
         self.questions: list[dict] = []  # {"label", "t", "spike", "signals", "done"}
         self.log = SessionLog(subject, now)
         self.log.event(now, "baseline_start", label=subject)
+
+    @property
+    def ready(self) -> bool:
+        """Both baselines are done, so questions can be asked."""
+        return self.baseline is not None and (self.voice_end is None or self.voice_done)
+
+    def voice_message(self) -> dict | None:
+        if self.voice_start is None:
+            return None
+        return {"start": round(self.voice_start, 3), "end": round(self.voice_end, 3),
+                "sentences": VOICE_SENTENCES, "done": self.voice_done}
 
     def next_label(self) -> str:
         return f"Q{len(self.questions) + 1}"
@@ -173,6 +207,10 @@ class Session:
     def on_sample(self, sample: dict) -> list[dict]:
         """Adds stress to the sample, logs it, and returns any session messages it triggers."""
         t = sample["t"]
+        if self.room_db is not None and sample.get("voice_db") is not None \
+                and sample["voice_db"] < self.room_db + SPEECH_MARGIN_DB:
+            for key in ("pitch", "jitter", "shimmer"):
+                sample[key] = None  # room noise, not the subject
         self.samples.append(sample)
         self.recent.append(sample)
         while self.recent[0]["t"] < t - scoring.STRESS_WINDOW_S:
@@ -180,9 +218,32 @@ class Session:
         events = []
 
         if self.baseline is None and t >= self.baseline_end:
-            self.baseline = scoring.Baseline([s for s in self.samples if s["t"] >= self.started])
+            silent = [s for s in self.samples if s["t"] >= self.started]
+            self.baseline = scoring.Baseline(silent)
+            room = sorted(s["voice_db"] for s in silent if s.get("voice_db") is not None)
+            if room:
+                self.room_db = room[len(room) // 2]
+                print(f"voice: room level {self.room_db:.1f} dB, speech counts above "
+                      f"{self.room_db + SPEECH_MARGIN_DB:.1f} dB", flush=True)
             self.log.event(t, "baseline_done")
             events.append({"type": "baseline", "t": round(t, 3), "phase": "done", **self.baseline.as_message()})
+            if VOICE_BASELINE_S > 0 and voice.status == "ok":
+                self.voice_start, self.voice_end = t, t + VOICE_BASELINE_S
+                self.log.event(t, "voice_baseline_start")
+                events.append({"type": "voice_baseline", "t": round(t, 3), "phase": "start",
+                               "duration": VOICE_BASELINE_S, "sentences": VOICE_SENTENCES})
+            elif VOICE_BASELINE_S > 0:
+                print(f"voice baseline skipped: microphone is {voice.status}", flush=True)
+
+        if self.voice_end is not None and not self.voice_done and t >= self.voice_end:
+            self.voice_done = True
+            voiced = self.baseline.add_voice([s for s in self.samples if self.voice_start <= s["t"] <= t])
+            self.log.event(t, "voice_baseline_done")
+            events.append({"type": "voice_baseline", "t": round(t, 3), "phase": "done",
+                           "voiced_samples": voiced, **self.baseline.as_message()})
+            if voiced < scoring.MIN_VOICE_SAMPLES:
+                events.append({"type": "error", "message": "Didn't hear enough speech for the voice baseline, "
+                               "so voice has no normal range this session. Check the microphone."})
 
         if self.baseline is not None:
             raw = scoring.stress(list(self.recent), self.baseline)
@@ -211,6 +272,7 @@ class Session:
 session: Session | None = None
 fake = FakeSignals()
 camera = Camera()
+voice = VoiceTracker()
 
 
 def sensor_status(*keys: str) -> str:
@@ -240,7 +302,7 @@ def status_message() -> dict:
             "camera": camera.status,
             # vision/face.py isn't connected yet; fake mode sends a fake blink_rate.
             "face": "simulated" if FAKE else ("ok" if sensor_status("blink_rate") == "ok" else "off"),
-            "voice": "off",  # cut for now (README)
+            "voice": voice.status,
         },
         # Lets a dashboard that reloads mid-session pick the session back up.
         "session": None if session is None else {
@@ -248,6 +310,7 @@ def status_message() -> dict:
             "started": round(session.started, 3),
             "baseline_end": round(session.baseline_end, 3),
             "baseline": session.baseline.as_message() if session.baseline else None,
+            "voice_baseline": session.voice_message(),
             "questions": [
                 {"label": q["label"], "t": round(q["t"], 3), "spike": q["spike"], "signals": q["signals"]}
                 for q in session.questions
@@ -281,6 +344,9 @@ async def handle_sample(sample: dict) -> None:
             breath_history.popleft()
         sample["breath_rate"] = scoring.breath_rate(list(breath_history), BREATH_WINDOW_S)
     sample["type"] = "sample"
+    features = voice.latest()  # real mic, even with VERIFI_FAKE=1 (like the camera)
+    if features:
+        sample.update({k: None if v is None else round(v, 2) for k, v in features.items()})
     now = time.time()
     for key in ("gsr", "hr", "spo2", "temp", "flex", "blink_rate"):
         if sample.get(key) is not None:
@@ -325,6 +391,7 @@ async def serial_loop(queue: asyncio.Queue) -> None:
 async def lifespan(app: FastAPI):
     global serial_reader
     camera.start()
+    voice.start()
     if FAKE:
         print("source: FAKE signals (VERIFI_FAKE=1)", flush=True)
         source = asyncio.create_task(fake_loop())
@@ -341,6 +408,7 @@ async def lifespan(app: FastAPI):
     for task in tasks:
         task.cancel()
     camera.stop()
+    voice.stop()
     if serial_reader:
         serial_reader.stop()
     if session:
@@ -382,6 +450,8 @@ async def handle(message: dict) -> str | None:
             return "No session running. Send start first."
         if session.baseline is None:
             return "Still recording the baseline. Wait for it to finish."
+        if not session.ready:
+            return "Still recording the voice baseline. Wait for the subject to finish reading."
         label = str(message.get("label") or session.next_label())
         await broadcast(session.ask(now, label, message.get("text"), message.get("stimulus")))
         if FAKE:

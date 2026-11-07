@@ -127,7 +127,19 @@ function showError(message) {
   errorTimer = setTimeout(() => setState({ error: null }), ERROR_SHOW_MS)
 }
 
-function beginSession({ name, startT, baselineEndT, baseline = null, questions = [] }) {
+// The voice baseline that follows the silent one: the subject reads sentences aloud.
+// null when it hasn't started, or the backend skipped it (no microphone).
+function toVoice(remote) {
+  if (!remote || !Number.isFinite(remote.start) || !Number.isFinite(remote.end)) return null
+  return {
+    startT: remote.start,
+    endT: remote.end,
+    sentences: Array.isArray(remote.sentences) ? remote.sentences.map(String) : [],
+    done: Boolean(remote.done),
+  }
+}
+
+function beginSession({ name, startT, baselineEndT, baseline = null, voice = null, questions = [] }) {
   if (state.activeId !== null) endSession()
   clearTimeout(startTimer)
   const id = nextSessionId++
@@ -138,6 +150,7 @@ function beginSession({ name, startT, baselineEndT, baseline = null, questions =
     startT,
     baselineEndT,
     baseline,
+    voice,
     questions,
     summary: null,
     endT: null,
@@ -186,6 +199,21 @@ function onBaseline(message) {
   }
 }
 
+function onVoiceBaseline(message) {
+  const active = activeSession()
+  if (!active || !Number.isFinite(message.t)) return
+  if (message.phase === 'start') {
+    const duration = Number.isFinite(message.duration) ? message.duration : 25
+    const voice = toVoice({ start: message.t, end: message.t + duration, sentences: message.sentences, done: false })
+    updateSession(active.id, { voice })
+  } else if (message.phase === 'done' && active.voice) {
+    updateSession(active.id, {
+      voice: { ...active.voice, endT: message.t, done: true },
+      baseline: toBaseline(message) ?? active.baseline,
+    })
+  }
+}
+
 function onQuestion(message) {
   const active = activeSession()
   if (!active || !Number.isFinite(message.t)) return
@@ -225,6 +253,7 @@ function onStatus(message) {
       startT: remote.started,
       baselineEndT: remote.baseline_end,
       baseline: toBaseline(remote.baseline),
+      voice: toVoice(remote.voice_baseline),
       questions: Array.isArray(remote.questions) ? remote.questions : [],
     })
   } else if (!remote && active && !state.starting) {
@@ -243,6 +272,8 @@ function handleSocketMessage(message) {
       return onStatus(message)
     case 'baseline':
       return onBaseline(message)
+    case 'voice_baseline':
+      return onVoiceBaseline(message)
     case 'question':
       return onQuestion(message)
     case 'response':
