@@ -5,6 +5,8 @@ Everything works on lists of sample dicts ({"t": ..., "gsr": ..., "hr": ..., ...
 so it doesn't care whether the samples are fake, from serial, or replayed.
 """
 
+from __future__ import annotations  # allows "float | None" hints on Python 3.9
+
 import numpy as np
 
 PRE_S = 2.0       # "before the question" window
@@ -12,16 +14,29 @@ WINDOW_S = 10.0   # response window after the question starts
 
 # Smallest standard deviation we trust per signal. Stops a very flat baseline
 # (or a sensor stuck on one value) from turning tiny wiggles into huge spikes.
-MIN_STD = {"gsr": 1.0, "hr": 1.0, "flex": 1.0, "blink_rate": 1.0}
+MIN_STD = {
+    "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 0.5, "blink_rate": 1.0, "lip_compression": 0.05,
+    "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
+}
 
 # spike = weighted mix of per-signal responses, weighted toward GSR.
 # Missing signals are skipped and the remaining weights rescaled.
 SPIKE_WEIGHTS = {"gsr": 0.6, "hr": 0.25, "breath_hold": 0.15}
 
-# Live stress: weighted SDs above baseline, STRESS_FULL_SCALE_SD maps to 100.
-STRESS_WEIGHTS = {"gsr": 0.7, "hr": 0.3}
+# Live stress: every signal's distance from baseline in SDs, mixed by how much
+# we trust each signal (STRESS_WEIGHTS). A signal that is an outlier right now
+# also gets extra weight: its weight is multiplied by its distance once that
+# passes 1 SD, so one strongly reacting signal isn't averaged away by quiet ones.
+# STRESS_FULL_SCALE_SD maps to 100.
+STRESS_WEIGHTS = {"gsr": 0.45, "hr": 0.25, "breath_rate": 0.15, "blink_rate": 0.1, "lip_compression": 0.05}
+# GSR and heart rate only count when above baseline. These count a change either way.
+STRESS_TWO_SIDED = {"breath_rate", "blink_rate"}
 STRESS_WINDOW_S = 2.0
 STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data: GSR creeps up over a session
+
+# A signal (or the combined stress) is flagged once it is ALERT_SD above baseline.
+ALERT_SD = 2.0
+STRESS_ALERT = round(ALERT_SD / STRESS_FULL_SCALE_SD * 100)
 
 # Breath hold: chest movement (flex range over HOLD_RANGE_S) below
 # HOLD_FRACTION of the baseline's typical range. The first NORMAL_PAUSE_S of a
@@ -106,6 +121,15 @@ class Baseline:
     def z(self, key: str, value: float) -> float:
         return (value - self.mean[key]) / self.std[key]
 
+    def as_message(self) -> dict:
+        """Per-signal mean and std for the dashboard, which draws them on every chart."""
+        return {
+            "mean": {k: round(v, 3) for k, v in self.mean.items()},
+            "std": {k: round(v, 3) for k, v in self.std.items()},
+            "alert_sd": ALERT_SD,
+            "stress_alert": STRESS_ALERT,
+        }
+
 
 def _weighted(parts: dict[str, float], weights: dict[str, float]) -> float | None:
     used = {k: w for k, w in weights.items() if k in parts}
@@ -115,19 +139,23 @@ def _weighted(parts: dict[str, float], weights: dict[str, float]) -> float | Non
 
 
 def stress(recent: list[dict], baseline: Baseline) -> float | None:
-    """0-100, how far GSR and HR currently sit above baseline. Not smoothed (the session smooths it)."""
-    parts = {}
-    for key in STRESS_WEIGHTS:
+    """0-100, how far the signals currently sit from baseline. Not smoothed (the session smooths it)."""
+    weighted_sum = total_weight = 0.0
+    for key, weight in STRESS_WEIGHTS.items():
         if key not in baseline.mean:
             continue
         x = column(recent, key)
         x = x[~np.isnan(x)]
-        if len(x):
-            parts[key] = baseline.z(key, float(x.mean()))
-    combined = _weighted(parts, STRESS_WEIGHTS)
-    if combined is None:
+        if not len(x):
+            continue
+        z = baseline.z(key, float(x.mean()))
+        distance = abs(z) if key in STRESS_TWO_SIDED else max(z, 0.0)
+        effective = weight * max(1.0, distance)  # outliers count for more
+        weighted_sum += effective * distance
+        total_weight += effective
+    if total_weight == 0:
         return None
-    return float(np.clip(combined / STRESS_FULL_SCALE_SD * 100, 0, 100))
+    return float(np.clip(weighted_sum / total_weight / STRESS_FULL_SCALE_SD * 100, 0, 100))
 
 
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:
