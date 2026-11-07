@@ -35,7 +35,7 @@ MAX_POINTS   = 300          # how many recent samples to show on the plot
 LOG_DIR      = Path("logs") # CSV logs go here
 
 
-# SERIAL HELPERS
+# SERIAL HELPERS test push
 
 def open_serial(port: str, baud: int, timeout: float = 1.0) -> serial.Serial:
     """Open the serial port with a timeout so readline() never blocks forever."""
