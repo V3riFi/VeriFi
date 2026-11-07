@@ -17,10 +17,10 @@ First time only:
 ```bash
 git clone https://github.com/V3riFi/VeriFi.git
 cd VeriFi
-git config core.hooksPath .githooks                  # once per clone; enables the commit-message hook
-python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+git config core.hooksPath .githooks                    # once per clone; enables the commit-message hook
+python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python openCV/download_models.py
+python3 openCV/download_models.py
 ```
 
 Then two terminals, both from the repo root with the venv active:
@@ -84,34 +84,31 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
 ## Architecture
 
 ```text
-  Sensors                       Webcam          Mic
-  GSR · Pulse/SpO2 · Flex        │              │
-  (+ question button, not        │              │
-   wired yet)                    │              │
-       │                         │              │
-  Arduino UNO                    │              │
-       │ USB serial, 115200 baud, 10 Hz         │
-       │                         │              │
-       └────────────┬────────────┴──────────────┘
-                    ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │  Python backend — ONE process, ONE clock                     │
-  │                                                              │
-  │  serial_io.py ──┐                                            │
-  │  camera.py ─────┼──► face.py ────┐                           │
-  │  voice/live.py ─┘                ├──► scoring.py             │
-  │                                  │    (baseline, z-scores)   │
-  │                                  ▼            │              │
-  │                        server.py (FastAPI + /ws)             │
-  │                                  │            │              │
-  │                                  │            └──► data/*.csv│
-  └──────────────────────────────────┼───────────────────────────┘
-                                     │ WebSocket JSON, ~20/s
-                                     ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │  Frontend (Vite + React)                                     │
-  │  live charts · stress indicator · question timeline           │
-  └─────────────────────────────────────────────────────────────┘
+   ┌─────────────────────┐  ┌──────────┐  ┌──────────┐
+   │ GSR · Pulse · SpO2  │  │ Webcam   │  │ Mic      │
+   │ Flex · Button       │  │          │  │          │
+   └──────────┬──────────┘  └────┬─────┘  └────┬─────┘
+              │                  │             │
+   ┌──────────▼──────────┐       │             │
+   │ Arduino UNO         │       │             │
+   │ 115200 baud · 10 Hz │       │             │
+   └──────────┬──────────┘       │             │
+              │                  │             │
+              ├──────────────────┴─────────────┘
+              │
+   ┌──────────▼──────────────────────────────────────────────┐
+   │  PYTHON BACKEND — one process, one clock                 │
+   │                                                          │
+   │  inputs    serial_io.py · camera.py · voice/live.py      │
+   │  vision    face.py  (MediaPipe on camera frames)         │
+   │  scoring   scoring.py  (baseline + per-signal z-scores)  │
+   │  outputs   server.py → WebSocket JSON · data/*.csv       │
+   └─────────────────────────────┬────────────────────────────┘
+                                 │ WebSocket JSON · ~20/s
+   ┌─────────────────────────────▼────────────────────────────┐
+   │  FRONTEND — Vite + React                                 │
+   │  live charts · stress indicator · question timeline      │
+   └──────────────────────────────────────────────────────────┘
 ```
 
 Everything runs locally on one laptop. No cloud, no database, no Docker.
@@ -167,7 +164,7 @@ Setup has seven steps. Steps 2–3 apply to everyone; step 4 is only for face tr
 git clone https://github.com/V3riFi/VeriFi.git
 cd VeriFi
 git config core.hooksPath .githooks     # once per clone; enables the commit-message hook
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
@@ -195,7 +192,7 @@ matplotlib
 ### 4. Face models (vision only, once per laptop)
 
 ```bash
-python openCV/download_models.py
+python3 openCV/download_models.py
 ```
 
 Without them the backend still runs, with face features off.
@@ -230,7 +227,7 @@ Add `VERIFI_BASELINE_S=10` for a 10 s baseline instead of 60 s while testing. On
 
 Start the frontend in a second terminal. `http://localhost:8000/` shows whether the Arduino is connected.
 
-**Hardware check without the backend:** `python -m backend.serial_io` opens a live plot of the Arduino's sensors. Don't run it while the backend is running.
+**Hardware check without the backend:** `python3 -m backend.serial_io` opens a live plot of the Arduino's sensors. Don't run it while the backend is running.
 
 ### 7. Arduino firmware (hardware only)
 
