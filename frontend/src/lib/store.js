@@ -274,6 +274,14 @@ export function startSession(name) {
   }, START_TIMEOUT_MS)
 }
 
+// The interrogator is asking a question right now. The backend timestamps it and
+// answers with a "question" echo, then a "response" about 10 s later.
+export function askQuestion(text = '') {
+  const message = { type: 'question' }
+  if (text.trim()) message.text = text.trim()
+  if (!socket.send(message)) showError('The backend is offline, so the question was not recorded.')
+}
+
 export function stopSession() {
   // Without a connection the backend can't be told, but the operator still needs out.
   if (!socket.send({ type: 'stop' })) endSession()

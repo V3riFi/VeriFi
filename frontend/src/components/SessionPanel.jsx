@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { IS_DEMO, dismissError, startSession, stopSession } from '../lib/store'
+import { IS_DEMO, askQuestion, dismissError, startSession, stopSession } from '../lib/store'
 import { formatDuration } from '../lib/format'
 
 function useNow() {
@@ -42,12 +42,61 @@ function ActiveSession({ session }) {
           <small>{left > 0 ? `${Math.ceil(left)} s left` : 'Finishing…'}</small>
         </div>
       ) : (
-        <p className="session-note">Baseline recorded. Ask your questions; the charts compare everything against it.</p>
+        <AskQuestion count={session.questions.length} />
       )}
       <button className="button-stop" type="button" onClick={stopSession}>
         Stop session
       </button>
     </>
+  )
+}
+
+// Press Ask (or Space anywhere outside a text field) the moment you start asking,
+// so the response window lines up with the question.
+function AskQuestion({ count }) {
+  const [text, setText] = useState('')
+
+  const ask = () => {
+    askQuestion(text)
+    setText('')
+  }
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.code !== 'Space' || event.repeat) return
+      const tag = event.target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || event.target?.isContentEditable) return
+      event.preventDefault()
+      askQuestion()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  return (
+    <form
+      className="session-form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        ask()
+      }}
+    >
+      <p className="session-note">Baseline recorded. Press Ask as you start each question.</p>
+      <label className="field">
+        <span>Question {count + 1} (optional text)</span>
+        <input
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          maxLength={200}
+          autoComplete="off"
+          placeholder="Where were you on Tuesday night?"
+        />
+        <small>Enter or the button asks it. Space anywhere else asks without text.</small>
+      </label>
+      <button className="button-primary" type="submit">
+        Ask question
+      </button>
+    </form>
   )
 }
 

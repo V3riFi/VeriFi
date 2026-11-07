@@ -331,6 +331,14 @@ export function connectDemo({ onMessage, onStatus }) {
           if (session) return emit({ type: 'error', message: 'A session is already running. Send stop first.' })
           session = new Session(String(message.subject || 'subject'), now)
           emit({ type: 'baseline', t: round(now, 3), phase: 'start', duration: DEMO_BASELINE_S })
+        } else if (message.type === 'question') {
+          if (!session) return emit({ type: 'error', message: 'No session running. Send start first.' })
+          if (session.baseline === null) {
+            return emit({ type: 'error', message: 'Still recording the baseline. Wait for it to finish.' })
+          }
+          session.nextQuestionAt = null // the operator is asking now; stop the automatic questions
+          emit(session.ask(now))
+          fake.react(now)
         } else if (message.type === 'stop') {
           if (!session) return emit({ type: 'error', message: 'No session running.' })
           const events = session.stop()
