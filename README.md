@@ -4,6 +4,8 @@
 
 A multimodal **suspicion detector** for interrogations. The interrogator asks questions and can show objects or crime-scene images; the suspect answers normally. VeriFi watches the subject's body and shows a live stress indicator plus which signals spiked after each question, compared against that person's own calm baseline.
 
+**It is not a truth machine.** It shows *when* the subject reacted, *which* signals reacted, and by how much. The interrogator makes the call. See [Limitations](#limitations).
+
 ---
 
 ## Quick run
@@ -154,7 +156,9 @@ requirements.txt           Python packages (hand-written)
 - Node.js **20.19+ or 22.12+** (Vite requirement)
 - Arduino IDE (for the firmware)
 
-### Backend + vision
+### Clone + Python environment
+
+For everyone, regardless of what they work on.
 
 ```bash
 git clone https://github.com/V3riFi/VeriFi.git
@@ -164,6 +168,8 @@ python -m venv .venv
 source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+### Python packages
 
 `requirements.txt` is written **by hand** — do not overwrite it with `pip freeze` (the team mixes Mac/Windows; a frozen file from one OS can break installs on the other). Contents:
 
@@ -183,7 +189,9 @@ matplotlib
 
 **Intel Mac note:** if `uname -m` prints `x86_64` on a Mac, `mediapipe==1.2.2` won't install (Apple Silicon wheels only). Install `mediapipe==0.10.21` by hand instead (needs Python 3.9–3.12) and leave `requirements.txt` unchanged.
 
-**Face models (once per laptop):**
+### Face models (vision)
+
+Once per laptop:
 
 ```bash
 python openCV/download_models.py
