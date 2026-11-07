@@ -4,8 +4,8 @@ The backend is the only program that opens the webcam (see README), and the
 dashboard can't, so this thread keeps the newest frame as a small JPEG and the
 server sends it over the WebSocket as a "frame" message.
 
-vision/face.py's FaceTracker must NOT open the webcam itself (only one program
-can hold it). It reads frames from here instead:
+backend/face.py runs the CV group's engine (openCV/vision) on these frames, so it
+never opens the webcam itself (only one program can hold it). It reads:
 
     t, frame = camera.latest_frame()   # full-size BGR numpy array, as cv2 gives it
     # skip it if t is the same as last time (no new frame yet)
