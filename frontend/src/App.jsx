@@ -8,6 +8,7 @@ import SessionPanel from './components/SessionPanel'
 import SessionHistory from './components/SessionHistory'
 import VerdictPanel from './components/VerdictPanel'
 import VerdictBreakdown from './components/VerdictBreakdown'
+import EvidenceFlow from './components/EvidenceFlow'
 import SignalTiles from './components/SignalTiles'
 import TimeChart from './components/TimeChart'
 import Section from './components/Section'
@@ -75,6 +76,8 @@ export default function App() {
   const [videoOpen, setVideoOpen] = useSectionOpen('video')
   const [sessionsOpen, setSessionsOpen] = useSectionOpen('sessions')
   const [whyOpen, setWhyOpen] = useSectionOpen('why')
+  // The data-to-result picture is open by default: it's the overview of how the verdict is built.
+  const [flowOpen, setFlowOpen] = useSectionOpen('flow', true)
   const [chartsOpen, setChartsOpen] = useSectionOpen('charts')
   // The answer shown in "Why this reading" (null = the newest).
   const [selectedAnswer, setSelectedAnswer] = useState(null)
@@ -144,6 +147,13 @@ export default function App() {
 
         <div className="main">
           <VerdictPanel session={viewed} selectedKey={selectedAnswer} onSelect={showAnswer} />
+          <EvidenceFlow
+            session={viewed}
+            selectedKey={selectedAnswer}
+            onSelect={showAnswer}
+            open={flowOpen}
+            onToggle={setFlowOpen}
+          />
           <VerdictBreakdown
             session={viewed}
             selectedKey={selectedAnswer}
