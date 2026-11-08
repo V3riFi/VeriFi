@@ -76,6 +76,21 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual({t.block for t in done}, {"case", "identity"})
         self.assertEqual(kinds["flash"], sum(len(r["items"]) for r in rounds))
 
+    def test_pitch_mode_layout(self):
+        """--calibration: only the case sensor round + case keyboard round run."""
+        rng = random.Random(0)
+        cp = case_plan(new_case(rng, "t", "guilty"))
+        rounds = [{"items": slow_items(cp, rng, 1, block="case_slow"), "title": "Part 1: sensor round, the case",
+                   "own": "the case", "next": "the fast keyboard round"}]
+        done, kinds = drive(cp.blocks(2, name="case", hide="anything you may know about the case"), rounds)
+        self.assertEqual({t.block for t in done}, {"case"})
+        self.assertEqual(kinds["flash"], len(rounds[0]["items"]))
+
+    def test_calibration_argument(self):
+        import verifi_session as vs
+        for arg in ("data/identity_7", "data/identity_7.trials.csv", "data/identity_7.results.json"):
+            self.assertEqual(vs.calibration_stem(arg), pathlib.Path("data/identity_7"))
+
     def test_progress_and_stopped_early(self):
         """A full run counts as complete; a run stopped early is INCOMPLETE and never a 'no evidence'."""
         from interview.analysis import INCOMPLETE, mark_progress

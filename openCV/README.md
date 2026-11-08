@@ -60,6 +60,17 @@ The session runs in this order:
 
 Then it prints the per-person profile, every channel, **one pre-registered verdict**, and only then the condition from the envelope. `--quick` takes about 15 min.
 
+**Pitch mode: calibrate earlier, test live (about 9 min on stage).** Run the identity test with sensors on the subject before the pitch, then point the session at that run:
+
+```bash
+run_identity.bat --sensor COM5
+```
+```bash
+run_verifi.bat --case data\cases\p01.json --sensor COM5 --quick --calibration data\identity_7
+```
+
+Steps 1 and 4 are skipped. The per-person profile is learned from the earlier run, using its own sensor log and camera, and fixed before the case is scored. It must be the **same person, with the same sensors on the same spots, on the same day**. A `--control` run or one stopped early is refused. A run without `--sensor` is accepted, but then there is no profile and default weights are used.
+
 ### Before every session with hardware: about 45 s
 
 ```bash

@@ -55,6 +55,8 @@ So in the final method **reaction time is the core signal, physiology is the sec
 3. Keyboard round on the case.
 4. Keyboard round on their own details (calibrates the keyboard channel; skipped with `--quick`).
 
+**Pitch mode** (`--calibration <earlier identity run>`): steps 1 and 4 come from an identity test with `--sensor` run earlier the same day on the same person with the same sensors, and only steps 2 and 3 run live. The profile is learned from that run's own sensor log and camera, and it is fixed before the case is scored, so the case p-value stays valid. Scoring is within-series, so only the *pattern* of response transfers (which cues fire, in which direction, how strongly), not absolute GSR or heart-rate levels. This is why the electrodes must stay on the same spots.
+
 ## 4. Scoring
 
 **One scorer for every channel** (`interview/scoring.py`):

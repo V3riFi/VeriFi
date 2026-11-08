@@ -121,10 +121,8 @@ def _rt_p(r: Optional[RtResult]) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------- whole session
-def analyse(stem: str, test_rt: str = "case", test_slow: str = "case_slow", cal_rt: str = "identity",
-            cal_slow: str = "identity_slow", physio_path: Optional[str] = None, gsr_inverted: bool = False,
-            n_perm: int = 4000) -> dict:
-    """Calibrate on the known-answer blocks, score the test blocks, every variant + the verdict."""
+def _load(stem: str, physio_path: Optional[str], gsr_inverted: bool, notes: list, tag: str = ""):
+    """One run's files -> (trials, slow rows, camera frames, physiology, face cues). Missing files -> empty."""
     p = paths(stem)
     trials = load_trials(p["trials"]) if _exists(p["trials"]) else []
     rows = load_slow(p["slow"]) if _exists(p["slow"]) else []
@@ -134,31 +132,53 @@ def analyse(stem: str, test_rt: str = "case", test_slow: str = "case_slow", cal_
         frames = load_frames(p["frames"])
     physio_path = physio_path or (p["physio"] if _exists(p["physio"]) else None)
     physio = Physio.from_csv(physio_path, gsr_inverted) if physio_path else None
-    out: dict = {"stem": stem, "physio_file": physio_path, "simulated_sensors": bool(physio and physio.simulated),
-                 "notes": []}
     if physio is not None and physio.simulated:
-        out["notes"].append("SIMULATED sensors: physiology left out of every score")
+        notes.append(tag + "SIMULATED sensors: physiology left out of every score")
         physio = None
     if physio is not None and len(physio.t) < 10:
-        out["notes"].append("sensor file has (almost) no samples: physiology left out")
+        notes.append(tag + "sensor file has (almost) no samples: physiology left out")
         physio = None
-    vision = load_vision_csv(p["vision"])
+    return trials, rows, frames, physio, load_vision_csv(p["vision"])
+
+
+def analyse(stem: str, test_rt: str = "case", test_slow: str = "case_slow", cal_rt: str = "identity",
+            cal_slow: str = "identity_slow", physio_path: Optional[str] = None, gsr_inverted: bool = False,
+            n_perm: int = 4000, cal_stem: Optional[str] = None) -> dict:
+    """Calibrate on the known-answer blocks, score the test blocks, every variant + the verdict.
+    `cal_stem`: take the calibration blocks from an EARLIER run of the same person instead
+    (e.g. identity_test.py --sensor before the pitch), with that run's own sensor log and camera."""
+    out: dict = {"stem": stem, "notes": []}
+    trials, rows, frames, physio, vision = _load(stem, physio_path, gsr_inverted, out["notes"])
+    out["physio_file"] = physio_path or (paths(stem)["physio"] if _exists(paths(stem)["physio"]) else None)
+    out["simulated_sensors"] = any("SIMULATED" in n for n in out["notes"])
+    if cal_stem:
+        c_trials, c_rows, c_frames, c_physio, c_vision = _load(cal_stem, None, gsr_inverted, out["notes"],
+                                                               "calibration run: ")
+        out["calibration_stem"] = cal_stem
+    else:
+        c_trials, c_rows, c_frames, c_physio, c_vision = trials, rows, frames, physio, vision
 
     # --- keyboard rounds
     t_test = [t for t in trials if t.block == test_rt]
-    t_cal = [t for t in trials if t.block == cal_rt]
+    t_cal = [t for t in c_trials if t.block == cal_rt]
     rt_raw = score_rt(t_test, known_label="TRUE", n_perm=n_perm) if t_test else None
-    out["rt_gating"] = gate_trials(t_test + t_cal, frames)
+    if cal_stem:
+        out["rt_gating"] = gate_trials(t_test, frames)
+        gate_trials(t_cal, c_frames)
+    else:
+        out["rt_gating"] = gate_trials(t_test + t_cal, frames)
     rt = score_rt(t_test, known_label="TRUE", n_perm=n_perm) if t_test else None
     rt_cal = score_rt(t_cal, known_label="TRUE", n_perm=n_perm) if t_cal else None
 
     # --- sensor rounds
-    r_cal = [r for r in rows if r.get("block") == cal_slow]
+    r_cal = [r for r in c_rows if r.get("block") == cal_slow]
     r_test = [r for r in rows if r.get("block") == test_slow]
-    g_cal, g_test = gate_rows(r_cal, frames), gate_rows(r_test, frames)
+    if cal_stem and not r_cal:
+        out["notes"].append("calibration run has no sensor round (run it with --sensor): no profile, default weights")
+    g_cal, g_test = gate_rows(r_cal, c_frames), gate_rows(r_test, frames)
     profile: Optional[Profile] = None
     if r_cal:
-        profile = build_profile(slow_epochs(r_cal, physio, g_cal["gated"], vision), _rt_p(rt_cal))
+        profile = build_profile(slow_epochs(r_cal, c_physio, g_cal["gated"], c_vision), _rt_p(rt_cal))
     slow_raw = score_slow(r_test, physio, n_perm=n_perm) if r_test else None
     slow_gated = score_slow(r_test, physio, n_perm=n_perm, gated=g_test["gated"]) if r_test else None
     slow_prof = slow_prof_nv = None
@@ -190,7 +210,7 @@ def analyse(stem: str, test_rt: str = "case", test_slow: str = "case_slow", cal_
             "notes": (slow_prof or slow_gated).notes},
         "calibration_sensor_round": None if not r_cal else {
             "gating": {k: v for k, v in g_cal.items() if k != "gated"},
-            "per_detail": slow_by_detail(r_cal, physio, g_cal["gated"], vision, default_params(SLOW_CUES))},
+            "per_detail": slow_by_detail(r_cal, c_physio, g_cal["gated"], c_vision, default_params(SLOW_CUES))},
         "profile": profile.to_json() if profile else None,
         "variants": var, "p": head,
         "verdict": verdict(head, task_ok, engaged),

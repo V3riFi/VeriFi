@@ -71,6 +71,21 @@ def write_session(d, seed, guilty, rt_ms=35.0, scr_true=1.0, sim=False, hr_respo
     return str(d / "s")
 
 
+def split(stem, a, b, in_a):
+    """Copy a session's rows into two runs by block (physio goes to both, like two recordings)."""
+    import shutil
+    for kind in ("trials", "slow"):
+        with open(f"{stem}.{kind}.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+        for dst, keep in ((a, True), (b, False)):
+            with open(f"{dst}.{kind}.csv", "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=list(rows[0]))
+                w.writeheader()
+                w.writerows(r for r in rows if in_a(r["block"]) == keep)
+    for dst in (a, b):
+        shutil.copy(f"{stem}.physio.csv", f"{dst}.physio.csv")
+
+
 class SessionAnalysisTests(unittest.TestCase):
     def run_one(self, seed, guilty, **kw):
         with tempfile.TemporaryDirectory() as d:
@@ -100,6 +115,26 @@ class SessionAnalysisTests(unittest.TestCase):
         self.assertTrue(r["simulated_sensors"])
         self.assertFalse(r["has_physiology"])
         self.assertTrue(any("SIMULATED" in n for n in r["notes"]))
+
+    def test_calibration_from_an_earlier_run(self):
+        """Pitch mode: the identity rounds live in an earlier run's files. Same data split over two
+        runs must learn the same profile and give the same verdict as one combined session."""
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            one = write_session(d, 7, True, hr_responder=True)
+            split(one, d / "ident", d / "pitch", lambda b: b.startswith("identity"))
+            both = analyse(one, n_perm=300)
+            r = analyse(str(d / "pitch"), cal_stem=str(d / "ident"), n_perm=300)
+            alone = analyse(str(d / "pitch"), n_perm=300)
+            cal_without_sensors = analyse(str(d / "pitch"), cal_stem=str(d / "nothing"), n_perm=300)
+        self.assertEqual(r["profile"]["cue_weights"], both["profile"]["cue_weights"])
+        self.assertIn("hr_change", r["profile"]["responders"])
+        self.assertEqual(code(r["verdict"]), code(both["verdict"]))
+        self.assertEqual(r["rt"]["p"], both["rt"]["p"])
+        self.assertIsNotNone(r["rt_calibration"])
+        self.assertIsNone(alone["profile"])                   # without --calibration: no profile at all
+        self.assertIsNone(cal_without_sensors["profile"])
+        self.assertTrue(any("no sensor round" in n for n in cal_without_sensors["notes"]))
 
     def test_missing_files_give_no_result_not_a_crash(self):
         with tempfile.TemporaryDirectory() as d:
