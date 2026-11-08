@@ -13,7 +13,7 @@ import TimeChart from './components/TimeChart'
 import Section from './components/Section'
 import { useSectionOpen } from './lib/useSectionOpen'
 
-const SOURCE_NAMES = { gsr: 'the GSR sensor', pulse: 'the pulse sensor', breathing: 'the breathing belt', face: 'face tracking' }
+const SOURCE_NAMES = { pulse: 'the pulse sensor', breathing: 'the breathing belt', face: 'face tracking' }
 
 function StressHeadline({ value, baseline, recordingBaseline }) {
   if (recordingBaseline) return <span className="stress-note">Recording baseline…</span>
@@ -198,7 +198,7 @@ export default function App() {
               />
             </TimeChart>
             <p className="stress-explainer">
-              Every signal's distance from this session's baseline, weighted toward skin conductance and heart rate. A
+              Every signal's distance from this session's baseline, weighted toward heart rate. A
               signal that is far from its baseline counts for more, so one strong reaction isn't averaged away.
             </p>
 

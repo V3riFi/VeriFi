@@ -23,16 +23,15 @@ function Cells({ voice, reading = false }) {
       <td>{fixed(voice.pitch, 0)}</td>
       <td>{fixed(voice.intonation, 0)}</td>
       <td>{fixed(voice.hnr, 1)}</td>
-      <td>{reading ? '0' : fixed(voice.tension, 1)}</td>
     </>
   )
 }
 
 function Row({ question }) {
   let content
-  if (!question.responded) content = <td colSpan={8} className="answers-note">Listening…</td>
-  else if (!question.voice) content = <td colSpan={8} className="answers-note">No voice data (microphone off)</td>
-  else if (!Number.isFinite(question.voice.duration_s)) content = <td colSpan={8} className="answers-note">No answer heard</td>
+  if (!question.responded) content = <td colSpan={7} className="answers-note">Listening…</td>
+  else if (!question.voice) content = <td colSpan={7} className="answers-note">No voice data (microphone off)</td>
+  else if (!Number.isFinite(question.voice.duration_s)) content = <td colSpan={7} className="answers-note">No answer heard</td>
   else content = <Cells voice={question.voice} />
   return (
     <tr>
@@ -64,7 +63,6 @@ export default function VoiceAnswers({ session }) {
               <th scope="col">Pitch <small>Hz</small></th>
               <th scope="col">Intonation <small>± Hz</small></th>
               <th scope="col">HNR <small>dB</small></th>
-              <th scope="col">Tension <small>SD</small></th>
             </tr>
           </thead>
           <tbody>
@@ -82,8 +80,8 @@ export default function VoiceAnswers({ session }) {
       </div>
       <p className="answers-help">
         Latency runs from <em>Done asking</em> to the first word (≈ when it wasn't clicked). Research links deception
-        with a longer latency, shorter and faster answers, slightly higher pitch, flatter intonation, lower HNR and more
-        tension. Compare answers with the reading and with each other, not with other people.
+        with a longer latency, shorter and faster answers, slightly higher pitch, flatter intonation and lower HNR.
+        Compare answers with the reading and with each other, not with other people.
       </p>
     </div>
   )

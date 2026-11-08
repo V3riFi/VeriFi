@@ -13,9 +13,9 @@ const STRESS_SMOOTHING = 0.1
 // scoring.py
 const PRE_S = 2
 const WINDOW_S = 10
-const MIN_STD = { gsr: 1, hr: 1, flex: 1, breath_rate: 0.5, blink_rate: 1, lip_compression: 0.05 }
-const SPIKE_WEIGHTS = { gsr: 0.6, hr: 0.25, breath_hold: 0.15 }
-const STRESS_WEIGHTS = { gsr: 0.45, hr: 0.25, breath_rate: 0.15, blink_rate: 0.1, lip_compression: 0.05 }
+const MIN_STD = { hr: 1, flex: 1, breath_rate: 0.5, blink_rate: 1, lip_compression: 0.05 }
+const SPIKE_WEIGHTS = { hr: 0.25, breath_hold: 0.15 }
+const STRESS_WEIGHTS = { hr: 0.25, breath_rate: 0.15, blink_rate: 0.1, lip_compression: 0.05 }
 const STRESS_TWO_SIDED = new Set(['breath_rate', 'blink_rate'])
 const STRESS_WINDOW_S = 2
 const STRESS_FULL_SCALE_SD = 8
@@ -137,7 +137,7 @@ function response(samples, qT, baseline) {
     return [finite(x.filter((_, i) => pre[i])), finite(x.filter((_, i) => post[i]))]
   }
 
-  for (const key of ['gsr', 'hr']) {
+  for (const key of ['hr']) {
     if (!(key in baseline.mean)) continue
     const [before, after] = split(key)
     if (before.length && after.length) signals[key] = round((Math.max(...after) - mean(before)) / baseline.std[key], 2)
@@ -149,7 +149,7 @@ function response(samples, qT, baseline) {
   const hold = longestHold(t, column(samples, 'flex'), post, baseline)
   if (hold !== null) signals.breath_hold_s = round(hold, 1)
 
-  const parts = Object.fromEntries(['gsr', 'hr'].filter((k) => k in signals).map((k) => [k, signals[k]]))
+  const parts = Object.fromEntries(['hr'].filter((k) => k in signals).map((k) => [k, signals[k]]))
   if (hold !== null) parts.breath_hold = Math.max(0, hold - NORMAL_PAUSE_S)
   const spike = weighted(parts, SPIKE_WEIGHTS)
   return [spike === null ? null : round(spike, 2), signals]
@@ -158,18 +158,17 @@ function response(samples, qT, baseline) {
 /* ---------- confidence.py + verdict.py ---------- */
 // The per-answer verdict. confidence.py scores each answer against the baseline; verdict.py turns
 // the combined Z into a deception likelihood. The demo has no microphone or camera, so Voice and
-// Lip / hand have no data, and every remaining category has one signal: its confidence is that
+// Lip have no data, and every remaining category has one signal: its confidence is that
 // signal's p (one-sided when directional, two-sided otherwise), as in confidence.py.
 
 const CATEGORIES = [
-  { name: 'Skin', weight: 0.3, sensors: [{ key: 'gsr', name: 'Skin conductance', direction: 1, phasic: [1, 5] }] },
   { name: 'Breathing', weight: 0.2, sensors: [{ key: 'chest_range', name: 'Chest movement', direction: -1 }] },
   { name: 'Cardiac', weight: 0.15, sensors: [{ key: 'hr', name: 'Heart rate', direction: 0 }] },
   { name: 'Voice', weight: 0.13, sensors: [], missing: 'Pitch: no microphone in the online demo' },
   { name: 'Blink', weight: 0.12, sensors: [{ key: 'blink_rate', name: 'Blink rate', direction: 0 }] },
-  { name: 'Lip / hand', weight: 0.05, sensors: [], missing: 'Lip compression: no camera in the online demo' },
+  { name: 'Lip', weight: 0.05, sensors: [], missing: 'Lip compression: no camera in the online demo' },
 ]
-const CONF_MIN_STD = { gsr: 1, hr: 1, chest_range: 1, blink_rate: 3 }
+const CONF_MIN_STD = { hr: 1, chest_range: 1, blink_rate: 3 }
 const MIN_WINDOW_SAMPLES = 3
 const EPS = 1e-300
 
@@ -194,7 +193,6 @@ const NULL_EDGES = Array.from({ length: 17 }, (_, i) => -4 + i * 0.5)
 const TRACE_S = 10
 const TRACE_STEP_S = 0.25
 const TRACE_KEYS = [
-  ['gsr', 'Skin conductance', 'raw'],
   ['hr', 'Heart rate', 'bpm'],
   ['flex', 'Breathing belt', 'raw'],
   ['blink_rate', 'Blink rate', 'per min'],
@@ -392,13 +390,6 @@ function coverage(samples, start, end) {
 
 function gates(engine, raw, samples, qT, until, provisional) {
   const out = [{ key: 'baseline', label: 'Calm baseline recorded', pass: Boolean(engine?.ready), detail: engine?.ready ? 'Baseline analyzed' : 'No usable baseline to compare with' }]
-  const gsr = between(samples, qT - PRE_S, until).map((s) => s.gsr).filter(Number.isFinite)
-  let skin
-  if (!gsr.length) skin = [false, 'No skin conductance data']
-  else if (Math.max(...gsr) <= 0) skin = [false, 'Skin sensor reads 0: it is not touching the skin']
-  else if (!raw?.categories.Skin) skin = [false, 'Skin conductance unusable']
-  else skin = [true, 'Skin conductance measured']
-  out.push({ key: 'skin', label: 'Skin sensor reading', pass: skin[0], detail: skin[1] })
   const [share, gap] = coverage(samples, qT, until)
   out.push({
     key: 'coverage',
@@ -428,10 +419,8 @@ function traceSlice(samples, qT, qEnd, until) {
     const points = [...bins.values()].map((e) => [round(e.t / e.n, 2), round(e.v / e.n, 3)])
     if (points.length) series[key] = { label, unit, points }
   }
-  const anchor = (qEnd ?? qT) - qT
   const windows = [
     { key: 'pre', label: 'Reference: just before the question', from: -PRE_S, to: 0 },
-    { key: 'peak', label: 'Skin reaction window', from: 1, to: round(Math.min(anchor + 5, until - qT), 2) },
     { key: 'answer', label: 'Answer window', from: 0, to: round(until - qT, 2) },
   ]
   return { from: -TRACE_S, to: TRACE_S, series, windows, end: qEnd === null ? null : round(qEnd - qT, 2) }
@@ -535,9 +524,7 @@ function sessionSummary(answers) {
 
 class FakeSignals {
   constructor() {
-    this.gsr = 450
     this.t0 = Date.now() / 1000
-    this.gsrRises = []
     this.hrBumpUntil = 0
     this.hold = null
     this.holdFlex = 330
@@ -545,8 +532,6 @@ class FakeSignals {
 
   react(now) {
     if (Math.random() < 0.5) return
-    const size = uniform(0.5, 1.5)
-    this.gsrRises.push([now + uniform(1.5, 3), 40 * size])
     this.hrBumpUntil = now + 8
     if (Math.random() < 0.5) {
       const start = now + uniform(0.5, 2)
@@ -557,14 +542,6 @@ class FakeSignals {
   sample() {
     const now = Date.now() / 1000
     const elapsed = now - this.t0
-    const period = 1 / SAMPLE_HZ
-
-    this.gsr += gauss(0.8)
-    this.gsr += (450 - this.gsr) * 0.002
-    for (const [start, rise] of this.gsrRises) {
-      if (start <= now && now < start + 3) this.gsr += (rise * period) / 3
-    }
-    this.gsrRises = this.gsrRises.filter(([start]) => now < start + 3)
 
     let hr = 72 + 4 * Math.sin(elapsed / 7) + gauss(0.5)
     if (now < this.hrBumpUntil) hr += 8
@@ -577,7 +554,6 @@ class FakeSignals {
     return {
       type: 'sample',
       t: round(now, 3),
-      gsr: round(this.gsr, 1),
       hr: round(hr, 1),
       flex: round(flex, 1),
       breath_rate: 15,
@@ -727,7 +703,6 @@ export function connectDemo({ onMessage, onStatus }) {
     type: 'status',
     components: {
       arduino: 'simulated',
-      gsr: 'simulated',
       pulse: 'simulated',
       breathing: 'simulated',
       camera: 'off',

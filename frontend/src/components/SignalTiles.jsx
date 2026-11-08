@@ -6,14 +6,12 @@ import VoiceAnswers from './VoiceAnswers'
 
 function formatValue(signal, value) {
   if (!Number.isFinite(value)) return '–'
-  if (signal.boolean) return value ? 'Yes' : 'No'
   if (Math.abs(value) < 10) return value.toFixed(2).replace(/\.?0+$/, '') || '0'
   return Math.round(value)
 }
 
 function rawValue(latest, field) {
-  const value = latest?.[field]
-  return typeof value === 'boolean' ? Number(value) : value
+  return latest?.[field]
 }
 
 function Status({ signal, value, thresholds, baseline, componentStatus, speaking }) {

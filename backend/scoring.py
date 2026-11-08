@@ -1,7 +1,7 @@
 """Baseline, live stress indicator and per-question response scoring.
 
 numpy only, no model training. Definitions match "Scoring definitions" in README.
-Everything works on lists of sample dicts ({"t": ..., "gsr": ..., "hr": ..., ...}),
+Everything works on lists of sample dicts ({"t": ..., "hr": ..., ...}),
 so it doesn't care whether the samples are fake, from serial, or replayed.
 """
 
@@ -17,20 +17,20 @@ WINDOW_S = 10.0   # response window after the question starts
 MIN_STD = {
     # breath_rate and blink_rate swing a lot naturally (talking, looking around);
     # a tight floor made the dashboard flag normal variation as a reaction.
-    "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 2.0, "blink_rate": 3.0, "lip_compression": 0.05,
+    "hr": 1.0, "flex": 1.0, "breath_rate": 2.0, "blink_rate": 3.0, "lip_compression": 0.05,
     "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
     # Voice: only present while the subject talks, so it gets its own baseline from the
     # voice phase (subject reads VOICE_SENTENCES) instead of the silent one. Drawn on
-    # the dashboard and used for vocal tension, not part of stress or spike.
+    # the dashboard, not part of stress or spike.
     "pitch": 5.0, "jitter": 0.2, "shimmer": 0.5, "voice_db": 2.0, "hnr": 1.0, "spectral_slope": 1.0,
 }
 VOICE_KEYS = ("pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope")
 SENSOR_KEYS = tuple(k for k in MIN_STD if k not in VOICE_KEYS)
 MIN_VOICE_SAMPLES = 20  # voiced samples needed for a voice baseline (~2 s of speech at 10 Hz)
 
-# spike = weighted mix of per-signal responses, weighted toward GSR.
+# spike = weighted mix of per-signal responses, weighted toward heart rate.
 # Missing signals are skipped and the remaining weights rescaled.
-SPIKE_WEIGHTS = {"gsr": 0.6, "hr": 0.25, "breath_hold": 0.15}
+SPIKE_WEIGHTS = {"hr": 0.25, "breath_hold": 0.15}
 
 # Live stress: every signal's distance from baseline in SDs, mixed by how much
 # we trust each signal (STRESS_WEIGHTS). A signal that is an outlier right now
@@ -38,13 +38,13 @@ SPIKE_WEIGHTS = {"gsr": 0.6, "hr": 0.25, "breath_hold": 0.15}
 # passes 1 SD, so one strongly reacting signal isn't averaged away by quiet ones.
 # STRESS_FULL_SCALE_SD maps to 100.
 # breath_rate is NOT in stress: answering out loud changes breathing, and with it
-# in, talking alone pushed stress to ~94 with GSR and heart rate flat. Breath
+# in, talking alone pushed stress to ~94 with heart rate flat. Breath
 # holds still count, per question, in the spike score (SPIKE_WEIGHTS).
-STRESS_WEIGHTS = {"gsr": 0.5, "hr": 0.3, "blink_rate": 0.13, "lip_compression": 0.07}
-# GSR and heart rate only count when above baseline. These count a change either way.
+STRESS_WEIGHTS = {"hr": 0.3, "blink_rate": 0.13, "lip_compression": 0.07}
+# Heart rate only counts when above baseline. These count a change either way.
 STRESS_TWO_SIDED = {"blink_rate"}
 STRESS_WINDOW_S = 2.0
-STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data: GSR creeps up over a session
+STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data
 
 # A signal (or the combined stress) is flagged once it is ALERT_SD above baseline.
 ALERT_SD = 2.0
@@ -89,7 +89,7 @@ def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | 
 
 
 # Signals that are negative for real. For every other one, a negative value is a sensor's "no reading".
-SIGNED = {"hnr", "spectral_slope", "vocal_tension"}
+SIGNED = {"hnr", "spectral_slope"}
 
 
 def column(samples: list[dict], key: str) -> np.ndarray:
@@ -192,22 +192,6 @@ def stress(recent: list[dict], baseline: Baseline) -> float | None:
     return float(np.clip(weighted_sum / total_weight / STRESS_FULL_SCALE_SD * 100, 0, 100))
 
 
-# Vocal tension: louder, more jitter and shimmer, steeper spectral slope, each in SDs
-# from the voice baseline, averaged. Steeper = more negative slope, hence the -1.
-# TUNE: much of the research finds a tense (pressed) voice has a FLATTER slope; flip
-# spectral_slope to +1 if real data agrees.
-TENSION_PARTS = {"voice_db": 1.0, "jitter": 1.0, "shimmer": 1.0, "spectral_slope": -1.0}
-
-
-def vocal_tension(sample: dict, baseline: Baseline) -> float | None:
-    """SDs above the voice baseline, while the subject is speaking. None when silent or no voice baseline."""
-    if sample.get("pitch") is None:
-        return None
-    parts = [sign * baseline.z(key, sample[key]) for key, sign in TENSION_PARTS.items()
-             if key in baseline.mean and sample.get(key) is not None]
-    return float(np.mean(parts)) if len(parts) >= 2 else None
-
-
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:
     """Longest stretch (seconds) inside the window where the chest barely moved."""
     if baseline.breath_range is None or baseline.breath_range <= 0:
@@ -238,13 +222,11 @@ def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float
     post = (t >= q_t) & (t <= q_t + WINDOW_S)
     signals: dict[str, float] = {}
 
-    for key in ("gsr", "hr"):
-        if key not in baseline.mean:
-            continue
-        x = column(samples, key)
+    if "hr" in baseline.mean:
+        x = column(samples, "hr")
         before, after = x[pre & ~np.isnan(x)], x[post & ~np.isnan(x)]
         if len(before) and len(after):
-            signals[key] = round(float((after.max() - before.mean()) / baseline.std[key]), 2)
+            signals["hr"] = round(float((after.max() - before.mean()) / baseline.std["hr"]), 2)
 
     if "blink_rate" in baseline.mean:
         x = column(samples, "blink_rate")
@@ -257,7 +239,7 @@ def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float
     if hold is not None:
         signals["breath_hold_s"] = round(float(hold), 1)
 
-    parts = {k: signals[k] for k in ("gsr", "hr") if k in signals}
+    parts = {"hr": signals["hr"]} if "hr" in signals else {}
     if hold is not None:
         parts["breath_hold"] = max(0.0, hold - NORMAL_PAUSE_S)
     spike = _weighted(parts, SPIKE_WEIGHTS)

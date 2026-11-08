@@ -16,9 +16,9 @@ VOICE = (40.0, 60.0)          # reading aloud (only in the voice tests)
 Q_T = 70.0                    # the question
 
 
-def make_session(seconds=90.0, seed=1, gsr=None, hr=None, flex_amp=None, talking=None, drop=None,
+def make_session(seconds=90.0, seed=1, hr=None, blink=None, flex_amp=None, talking=None, drop=None,
                  only=None):
-    """Samples at HZ. gsr/hr/flex_amp/talking: functions of t that change the calm signal.
+    """Samples at HZ. hr/blink/flex_amp/talking: functions of t that change the calm signal.
 
     drop: (start, end) with no samples. only: keep just these fields (plus t).
     """
@@ -31,12 +31,10 @@ def make_session(seconds=90.0, seed=1, gsr=None, hr=None, flex_amp=None, talking
         amp = flex_amp(t) if flex_amp else 25.0
         s = {
             "t": t,
-            "gsr": 450 + rng.normal(0, 1.5) + (gsr(t) if gsr else 0.0),
             "hr": 72 + 3 * math.sin(t / 7) + rng.normal(0, 0.5) + (hr(t) if hr else 0.0),
             "flex": 330 + amp * math.sin(2 * math.pi * 0.25 * t) + rng.normal(0, 1),
-            "blink_rate": 17 + rng.normal(0, 1.5),
+            "blink_rate": 17 + rng.normal(0, 1.5) + (blink(t) if blink else 0.0),
             "lip_compression": 0.05 + rng.normal(0, 0.01),
-            "hand_on_face": False,
         }
         if talking and talking(t):
             s.update({"pitch": 120 + rng.normal(0, 8), "jitter": 1.5 + rng.normal(0, 0.3),
@@ -48,9 +46,14 @@ def make_session(seconds=90.0, seed=1, gsr=None, hr=None, flex_amp=None, talking
     return samples
 
 
-def rise(start, size, over=3.0):
-    """A skin conductance rise starting at `start`, reaching `size` after `over` seconds."""
-    return lambda t: 0.0 if t < start else size * min(1.0, (t - start) / over)
+def bump(size, start=Q_T + 1, end=Q_T + 9):
+    """A change of `size` from `start` to `end`."""
+    return lambda t: size if start <= t <= end else 0.0
+
+
+def step(size, start=Q_T + 1):
+    """A change of `size` from `start` onward."""
+    return lambda t: size if t >= start else 0.0
 
 
 def score(samples, q_end=None, until=None, voice=None, provisional=False):
@@ -70,14 +73,13 @@ def gate(v, key):
 
 class Reactions(unittest.TestCase):
     def test_reaction_reads_high(self):
-        samples = make_session(gsr=rise(Q_T + 2, 40), hr=lambda t: 8.0 if Q_T + 1 <= t <= Q_T + 9 else 0.0)
+        # Two signal groups reacting together: one alone isn't enough to read as a reaction.
+        samples = make_session(hr=step(20), blink=step(30))
         v, _, _ = score(samples)
         self.assertIn(v["band"], ("elevated", "high"))
         self.assertGreater(v["likelihood"], 0.6)
         self.assertEqual(v["result"], "reaction")
-        skin = category(v, "Skin")
-        self.assertEqual(max(v["categories"], key=lambda c: c["contribution"] or -9)["name"], "Skin")
-        self.assertGreater(skin["z"], 3)
+        self.assertGreater(category(v, "Cardiac")["z"], 2)
         lo, hi = v["interval"]
         self.assertLessEqual(lo, v["likelihood"])
         self.assertGreaterEqual(hi, v["likelihood"])
@@ -87,21 +89,6 @@ class Reactions(unittest.TestCase):
         self.assertIn(v["band"], ("low", "unclear"))
         self.assertLess(v["likelihood"], 0.6)
         self.assertNotEqual(v["result"], "reaction")
-
-    def test_done_asking_moves_the_skin_window(self):
-        # The question takes 6 s to ask, and the skin reacts 2 s after it ends: outside
-        # 1-5 s after Ask, inside 5 s after Done asking.
-        q_end = Q_T + 6
-        samples = make_session(seconds=100, gsr=rise(q_end + 1, 40))
-        with_end, _, _ = score(samples, q_end=q_end)
-        without_end, _, _ = score(samples, q_end=None, until=q_end + 10)
-        # Without the rise the peak-minus-before measure still sits ~2 SD up (the peak of noise),
-        # so "missed" means near that, far below the caught rise.
-        self.assertGreater(category(with_end, "Skin")["z"], 6)
-        self.assertLess(category(without_end, "Skin")["z"], 3)
-        self.assertGreater(with_end["likelihood"], without_end["likelihood"])
-        peak = next(w for w in with_end["trace"]["windows"] if w["key"] == "peak")
-        self.assertAlmostEqual(peak["to"], 11.0, places=1)
 
     def test_breathing_is_scored_while_talking(self):
         # Talking makes breathing shallower. The answer is compared with breathing while reading
@@ -117,7 +104,7 @@ class Reactions(unittest.TestCase):
         self.assertIsNotNone(category(v, "Voice")["z"])
 
     def test_contributions_add_up_to_z(self):
-        v, _, _ = score(make_session(gsr=rise(Q_T + 2, 15)))
+        v, _, _ = score(make_session(hr=bump(10)))
         total = sum(c["contribution"] for c in v["categories"] if c["contribution"] is not None)
         self.assertAlmostEqual(total, v["z"], places=2)
 
@@ -135,20 +122,12 @@ class QualityGates(unittest.TestCase):
         v, _ = verdict.score(None, samples, Q_T, Q_T + 10)
         self.assert_fails(v, "baseline")
 
-    def test_skin_sensor_reads_zero(self):
-        samples = make_session()
-        for s in samples:
-            s["gsr"] = 0.0
-        v, _, _ = score(samples)
-        self.assert_fails(v, "skin")
-        self.assertIn("not touching", v["reason"])
-
     def test_gap_in_the_window(self):
         v, _, _ = score(make_session(drop=(Q_T + 3, Q_T + 8)))
         self.assert_fails(v, "coverage")
 
     def test_too_few_signal_groups(self):
-        v, _, _ = score(make_session(only={"gsr"}))
+        v, _, _ = score(make_session(only={"hr"}))
         self.assert_fails(v, "signals")
 
     def test_all_gates_pass_on_a_clean_answer(self):
@@ -182,34 +161,34 @@ class Model(unittest.TestCase):
 
 class Explanation(unittest.TestCase):
     def test_null_distribution_and_trace(self):
-        v, _, engine = score(make_session(gsr=rise(Q_T + 2, 40)))
-        skin = category(v, "Skin")
-        null = skin["null"]
+        v, _, engine = score(make_session(hr=bump(20)))
+        cardiac = category(v, "Cardiac")
+        null = cardiac["null"]
         self.assertEqual(sum(null["counts"]), null["n"])
         self.assertEqual(len(null["edges"]), len(null["counts"]) + 1)
         self.assertGreater(null["n"], 20)  # pseudo-questions across the 40 s baseline
         self.assertGreaterEqual(null["percentile"], 0.95)
-        self.assertIn("gsr", v["trace"]["series"])
-        times = [p[0] for p in v["trace"]["series"]["gsr"]["points"]]
+        self.assertIn("hr", v["trace"]["series"])
+        times = [p[0] for p in v["trace"]["series"]["hr"]["points"]]
         self.assertLessEqual(min(times), -9)
         self.assertGreaterEqual(max(times), 9)
-        signals = skin["signals"][0]
-        self.assertTrue(signals["phasic"])
-        self.assertEqual(signals["direction"], 1)
+        signals = cardiac["signals"][0]
+        self.assertFalse(signals["phasic"])
+        self.assertEqual(signals["direction"], 0)
 
     def test_provisional_is_light(self):
-        samples = make_session(gsr=rise(Q_T + 2, 40))
+        samples = make_session(hr=bump(20))
         v, _, _ = score(samples, until=Q_T + 4, provisional=True)
         self.assertTrue(v["provisional"])
         self.assertNotIn("trace", v)
-        self.assertNotIn("signals", category(v, "Skin"))
+        self.assertNotIn("signals", category(v, "Cardiac"))
 
 
 class Session(unittest.TestCase):
     def test_session_adds_up_the_answers(self):
         calm, _, _ = score(make_session())
-        hot, _, _ = score(make_session(seed=2, gsr=rise(Q_T + 2, 40)))
-        failed, _, _ = score(make_session(only={"gsr"}))
+        hot, _, _ = score(make_session(seed=2, hr=bump(20)))
+        failed, _, _ = score(make_session(only={"hr"}))
         summary = verdict.session_summary([("Q1", calm), ("Q2", hot), ("Q3", failed)])
         self.assertEqual(summary["answers"], 2)
         self.assertAlmostEqual(summary["log_lr"], calm["log_lr"] + hot["log_lr"], places=3)

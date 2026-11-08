@@ -5,14 +5,13 @@ webcam; only one program can), in a background thread:
 
     face = FaceTracker(camera)
     face.start()
-    face.latest()   # -> {"blink_rate": 16.0, "hand_on_face": False, "lip_compression": 0.12}
+    face.latest()   # -> {"blink_rate": 16.0, "lip_compression": 0.12}
     face.status     # "ok" | "missing" | "off"
 
 Fields (same names the dashboard and scoring already use):
   blink_rate       blinks per minute over the last 30 s. None for the first 10 s, and
                    blinks aren't counted while the head is turned > 35 deg or tilted
                    > 25 deg, so put the camera at eye level, facing the subject.
-  hand_on_face     True while a hand overlaps the face
   lip_compression  MediaPipe's "mouth press" score, 0-1, averaged over LIP_SMOOTH_S
 
 openCV/ also holds the reaction-time identity test (run before the interview, on its
@@ -118,7 +117,6 @@ class FaceTracker:
             features = {
                 # Only while a face is in view; otherwise the dashboard shows a gap.
                 "blink_rate": engine.blink.blink_rate_per_minute(last_t) if rec.get("face_present") else None,
-                "hand_on_face": bool(rec["face_touch"]) if "face_touch" in rec else None,
                 "lip_compression": sum(v for _, v in lips) / len(lips) if lips else None,
             }
             with self._lock:

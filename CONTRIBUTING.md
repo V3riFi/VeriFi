@@ -118,7 +118,7 @@ Don't change these without telling everyone, since other people's code depends o
 
 - **Serial protocol** (firmware <-> backend): see README.
 - **WebSocket messages** (backend <-> frontend): `ws://localhost:8000/ws`, JSON, one object per update. Add new fields freely; don't rename or remove existing ones without asking.
-- **Vision output** (vision <-> backend): a dict of features per frame window, e.g. `{"blink_rate": 18.0, "hand_on_face": false}`.
+- **Vision output** (vision <-> backend): a dict of features per frame window, e.g. `{"blink_rate": 18.0, "lip_compression": 0.12}`.
 
 ## Testing with real people
 

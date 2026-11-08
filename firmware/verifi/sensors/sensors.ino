@@ -1,9 +1,8 @@
-// BioAmp ECG (A0) heartbeat + GSR (A1) + BioAmp EMG (A2) breathing
-// Output: breath: X, gsr: X, heartbeat: X, raw_ecg: X, raw_emg: X   at 10 Hz
+// BioAmp ECG (A0) heartbeat + BioAmp EMG (A2) breathing
+// Output: breath: X, heartbeat: X, raw_ecg: X, raw_emg: X   at 10 Hz
 //
 // WIRING:
 //   BioAmp ECG   OUT -> A0    IN+ right wrist, IN- left wrist, REF back of right hand
-//   GSR          OUT -> A1    electrodes via 3.5 mm jack
 //   BioAmp EMG   OUT -> A2    IN+ right lower chest ~2.5cm above bottom rib,
 //                              IN- left lower chest mirror, REF sternum
 //   LED          D13          blinks per detected heartbeat
@@ -15,7 +14,6 @@
 #include <math.h>
 
 const int ECG_PIN = A0;
-const int GSR_PIN = A1;
 const int EMG_PIN = A2;
 const int LED_PIN = 13;
 
@@ -188,11 +186,10 @@ void setup() {
 
   Serial.begin(115200);
   pinMode(ECG_PIN, INPUT);
-  pinMode(GSR_PIN, INPUT);
   pinMode(EMG_PIN, INPUT);
   delay(500);
   Serial.println("STATUS: starting");
-  Serial.println("STATUS: ECG A0, GSR A1, EMG A2");
+  Serial.println("STATUS: ECG A0, EMG A2");
 }
 
 void loop() {
@@ -272,8 +269,6 @@ void loop() {
   if (now - lastPrint >= PRINT_US) {
     lastPrint = now;
 
-    int gsr = analogRead(GSR_PIN);
-
     // ECG validity check
     bool recentPeak = (lastPeakUs > 0) && (now - lastPeakUs < NO_PEAK_TIMEOUT_US);
     bool signalValid = ecgSignalClean && recentPeak;
@@ -306,7 +301,6 @@ void loop() {
     int breath = (breathScaled > 2000.0f) ? 2000 : (int)breathScaled;
 
     Serial.print("breath: ");      Serial.print(breath);
-    Serial.print(", gsr: ");       Serial.print(gsr);
     Serial.print(", heartbeat: "); Serial.print(shown);
     Serial.print(", raw_ecg: ");   Serial.print(analogRead(ECG_PIN));
     Serial.print(", raw_emg: ");   Serial.println(analogRead(EMG_PIN));

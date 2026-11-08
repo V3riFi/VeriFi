@@ -16,7 +16,6 @@ const ERROR_SHOW_MS = 8000
 const newBuffer = () => Object.fromEntries([['t', []], ...SAMPLE_FIELDS.map((field) => [field, []])])
 
 function toNumber(value) {
-  if (typeof value === 'boolean') return value ? 1 : 0
   return Number.isFinite(value) ? value : null
 }
 

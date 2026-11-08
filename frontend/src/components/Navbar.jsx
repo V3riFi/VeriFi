@@ -4,7 +4,6 @@ import logoUrl from '../assets/verifi-logo.png'
 
 const COMPONENTS = [
   { key: 'arduino', label: 'Arduino' },
-  { key: 'gsr', label: 'GSR' },
   { key: 'pulse', label: 'Pulse' },
   { key: 'breathing', label: 'Breathing belt' },
   { key: 'camera', label: 'Camera' },

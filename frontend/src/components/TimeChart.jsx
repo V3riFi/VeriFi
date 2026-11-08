@@ -171,7 +171,6 @@ function buildOptions({ signal, width, height, viewRef, readoutRef, labelQuestio
     isSession() ? formatClock(t - viewRef.current.session.startT) : `${Math.round(u.scales.x.max - t)}s ago`
 
   const formatY = (value) => {
-    if (signal.boolean) return value >= 0.5 ? 'Yes' : 'No'
     return Math.abs(value) < 10 ? value.toFixed(2) : value.toFixed(1)
   }
 
@@ -201,7 +200,6 @@ function buildOptions({ signal, width, height, viewRef, readoutRef, labelQuestio
       y: {
         range: (u, min, max) => {
           if (signal.key === 'stress') return [0, 100]
-          if (signal.boolean) return [-0.15, 1.15]
           const { thresholds } = viewRef.current
           if (min == null) {
             if (!thresholds) return [0, 1]
@@ -246,7 +244,6 @@ function buildOptions({ signal, width, height, viewRef, readoutRef, labelQuestio
         ticks: { show: false },
         font: '11px system-ui, sans-serif',
         size: 48,
-        ...(signal.boolean && { splits: () => [0, 1], values: (u, splits) => splits.map(formatY) }),
       },
     ],
     series: [
@@ -256,7 +253,6 @@ function buildOptions({ signal, width, height, viewRef, readoutRef, labelQuestio
         stroke: (u) => lineStroke(u, viewRef.current.thresholds),
         width: signal.key === 'stress' ? 2.5 : 2,
         points: { show: false },
-        ...(signal.boolean && { paths: uPlot.paths.stepped({ align: 1 }) }),
       },
     ],
     hooks: {

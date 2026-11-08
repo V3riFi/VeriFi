@@ -7,15 +7,15 @@ compares a reading from the question with a reference:
 
 Two kinds of reading ("measure" in CATEGORIES):
   - "mean" (default): the answer window's {mu, sigma} against the session baseline's {mu, sigma}.
-  - "phasic": a short reaction, as in scoring.response(): the peak in a latency window (for skin
-    conductance 1 s after Ask to 5 s after Done asking; the 1-5 s is openCV/interview/fusion.py's)
+  - "phasic": a short reaction, as in scoring.response(): the peak in a latency window (a set time
+    after Ask to a set time after Done asking; no signal uses this at the moment)
     minus the mean of the PRE_S seconds before the question, over the baseline's sigma. Slow drift
     over a session cancels.
 
 Each signal has a "direction": +1 (a rise is suspicious), -1 (a drop is), or 0 (either way).
 Directional signals use z with its sign and a one-sided p; direction 0 uses |z| and a two-sided p.
 
-Signals are grouped into categories (Skin, Breathing, Cardiac, Voice, Blink, Lip / hand; Voice
+Signals are grouped into categories (Breathing, Cardiac, Voice, Blink, Lip; Voice
 holds pitch, loudness, spectral slope, clarity, jitter and shimmer). A category of
 two-sided signals combines them into a weighted chi-square, Q = sum(w_i * z_i^2), whose tail
 probability (Satterthwaite approximation) is the CATEGORY CONFIDENCE: the chance of a departure
@@ -30,7 +30,7 @@ CONFIDENCE.
 `suspicion` = 1 - confidence is reported too, for ranking questions.
 
 Data comes in the same shapes the rest of the backend uses:
-  - live: lists of sample dicts ({"t": ..., "gsr": ..., ...}), e.g. server.Session.samples
+  - live: lists of sample dicts ({"t": ..., "hr": ..., ...}), e.g. server.Session.samples
     -> score_question() / score_live_question(); to_message() is the "confidence" field that
     server.py adds to each "response" for the dashboard's question summary
   - recorded: a session CSV from data/ (written by server.SessionLog)
@@ -232,17 +232,13 @@ def _voice(key: str, name: str, weight: float, direction: int = 0) -> dict:
 
 
 # Category weights: evidence ranking (effect size d where known). Only their ratios matter.
-#   1 GSR .30 (d~1.55)   2 respiration .20 (d~1.11)   3 heart rate .15 (d~0.89)
-#   4 voice pitch + response latency .13 (d~0.2-0.27)   5 blink .12   6 lip / hand-to-face .05
-#   7 gaze aversion .05 -> dropped: no gaze signal is recorded, and the evidence calls it a myth.
+#   1 respiration .20 (d~1.11)   2 heart rate .15 (d~0.89)
+#   3 voice pitch + response latency .13 (d~0.2-0.27)   4 blink .12   5 lip .05
+#   6 gaze aversion .05 -> dropped: no gaze signal is recorded, and the evidence calls it a myth.
 # Response latency is one number per answer (no mu/sigma over a window), so it isn't included.
-# Voice keeps row 4's .13 as one category; the other voice features share it, weighted inside
+# Voice keeps row 3's .13 as one category; the other voice features share it, weighted inside
 # the category (see "Voice" below).
 CATEGORIES = {
-    "Skin": {"weight": 0.30, "sensors": [
-        # Phasic response: rises 1-5 s after the question (window from openCV/interview/fusion.py).
-        {"key": "gsr", "name": "Skin conductance", "weight": 1.0, "direction": +1, "phasic": (1.0, 5.0)},
-    ]},
     "Breathing": {"weight": 0.20, "sensors": [
         # Respiration suppression: shallower breathing = less chest movement.
         {"key": "chest_range", "name": "Chest movement", "weight": 1.0, "phase": "voice", "direction": -1},
@@ -257,7 +253,7 @@ CATEGORIES = {
     #   pitch 1.0 (+)     the most consistent vocal stress finding (pitch rises)
     #   loudness 0.5 (+)  louder under arousal, but also depends on distance to the mic
     #   spectral slope 0.4 (either way)  energy shifts toward high frequencies under arousal,
-    #                     but the direction is disputed (see TENSION_PARTS in scoring.py)
+    #                     but the direction is disputed
     #   clarity 0.3, jitter 0.2, shimmer 0.2 (either way)  mixed findings, noisy on short answers.
     #   These three overlap (all measure voice irregularity), so low weights keep them from
     #   counting the same evidence three times.
@@ -272,15 +268,13 @@ CATEGORIES = {
     "Blink": {"weight": 0.12, "sensors": [
         {"key": "blink_rate", "name": "Blink rate", "weight": 1.0},
     ]},
-    "Lip / hand": {"weight": 0.05, "sensors": [
+    "Lip": {"weight": 0.05, "sensors": [
         {"key": "lip_compression", "name": "Lip compression", "weight": 1.0},
-        {"key": "hand_on_face", "name": "Hand on face", "weight": 1.0},
     ]},
 }
 
-# Smallest baseline sigma per signal: scoring's floors, plus hand_on_face (a 0/1 signal that is
-# usually 0 for the whole baseline, which would make any single touch infinitely significant).
-MIN_STD = {**scoring.MIN_STD, "hand_on_face": 0.1, "chest_range": scoring.MIN_STD["flex"]}
+# Smallest baseline sigma per signal: scoring's floors.
+MIN_STD = {**scoring.MIN_STD, "chest_range": scoring.MIN_STD["flex"]}
 MIN_BASELINE_SAMPLES = 2                        # ddof=1 needs two
 MIN_VOICE_BASELINE = scoring.MIN_VOICE_SAMPLES  # as scoring.Baseline.add_voice
 MIN_WINDOW_SAMPLES = 3                          # values needed in the answer window
@@ -458,7 +452,7 @@ def load_session_csv(path: Path) -> tuple[list[dict], list[dict]]:
     """A session CSV from data/ (server.SessionLog) as (samples, events).
 
     Sample rows have no "event"; event rows (baseline_start, question, response, ...) do.
-    Values come back as floats, booleans (hand_on_face) or None, like live samples.
+    Values come back as floats or None, like live samples.
     """
     samples, events = [], []
     with open(path, newline="") as f:

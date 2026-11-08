@@ -12,10 +12,11 @@ Two ways to use it:
        python -m backend.serial_io --port /dev/cu.usbmodem1101
 
 Matches firmware/verifi/sensors (10 Hz, one labeled line per sample):
-    breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
+    breath: 120, heartbeat: 72, raw_ecg: 515, raw_emg: 508
 The older pulse-module sketches are still accepted:
-    breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
-("Blood Pressure:" also works in place of "spo2:".) Lines starting with "STATUS:"
+    breath: 512, heartbeat: 72, spo2: 98, temp: 31.5
+("Blood Pressure:" also works in place of "spo2:". A "gsr:" field from a board that
+hasn't been reflashed is ignored.) Lines starting with "STATUS:"
 are printed, not parsed.
 
 Heart rate is passed through a median-of-3 filter over *distinct* sensor
@@ -50,7 +51,7 @@ RECONNECT_S = 2.0
 
 NUM = r"(-?[\d.]+)"
 LINE_RE = re.compile(
-    rf"breath:\s*{NUM},\s*gsr:\s*{NUM},\s*heartbeat:\s*{NUM},\s*(?:"
+    rf"breath:\s*{NUM},\s*(?:gsr:\s*-?[\d.]+,\s*)?heartbeat:\s*{NUM},\s*(?:"
     rf"(?:spo2|blood pressure):\s*{NUM},\s*temp:\s*{NUM}"
     rf"|raw_ecg:\s*{NUM},\s*raw_emg:\s*{NUM})",
     re.IGNORECASE,
@@ -103,7 +104,7 @@ class HRFilter:
 
 
 def parse_line(raw: str) -> dict | None:
-    """One Arduino line -> {"flex", "gsr", "hr", "spo2", "temp"}, or None for STATUS lines / garbage.
+    """One Arduino line -> {"flex", "hr", "spo2", "temp"}, or None for STATUS lines / garbage.
 
     heartbeat, spo2 and temp read 0 (or -1) until the pulse sensor has a reading;
     those become None so they count as missing, not as real zeros.
@@ -112,14 +113,13 @@ def parse_line(raw: str) -> dict | None:
     if not m:
         return None
     try:
-        breath, gsr, hr, spo2, temp, _raw_ecg, _raw_emg = (
+        breath, hr, spo2, temp, _raw_ecg, _raw_emg = (
             float(g) if g is not None else 0.0 for g in m.groups()
         )
     except ValueError:
         return None
     return {
         "flex": breath,
-        "gsr": gsr,
         "hr": hr if hr > 0 else None,
         "spo2": spo2 if spo2 > 0 else None,
         "temp": temp if temp > 0 else None,
@@ -257,17 +257,15 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
     print(f"Connected to {port} @ {baud} baud. Logging to {log_path}")
     print("Press Ctrl+C to stop.\n")
 
-    bufs = {k: deque(maxlen=MAX_POINTS) for k in ("gsr", "flex", "hr")}
+    bufs = {k: deque(maxlen=MAX_POINTS) for k in ("flex", "hr")}
     hr_filter = HRFilter()
 
     plt.ion()
-    fig, (ax_gsr, ax_breath, ax_hr) = plt.subplots(3, 1, figsize=(10, 7), sharex=True)
+    fig, (ax_breath, ax_hr) = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
     fig.tight_layout(pad=2.5)
-    (line_gsr,) = ax_gsr.plot([], [], lw=1, color="tab:blue")
     (line_breath,) = ax_breath.plot([], [], lw=1, color="tab:green")
     (line_hr,) = ax_hr.plot([], [], lw=1, color="tab:red")
-    ax_gsr.set_ylabel("GSR (raw ADC)")
-    ax_gsr.set_title("Live Sensor Stream")
+    ax_breath.set_title("Live Sensor Stream")
     ax_breath.set_ylabel("Breath (flex ADC)")
     ax_hr.set_ylabel("Heart rate (BPM)")
     ax_hr.set_ylim(0, 200)  # fixed so a missing reading (no finger) is easy to spot
@@ -277,7 +275,7 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
     csv_file = open(log_path, "a", newline="")
     writer = csv.writer(csv_file)
     if new_file:
-        writer.writerow(["iso_time", "unix_time", "breath", "gsr", "hr", "spo2", "temp"])
+        writer.writerow(["iso_time", "unix_time", "breath", "hr", "spo2", "temp"])
 
     try:
         while True:
@@ -290,17 +288,15 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
                 continue
             s["hr"] = hr_filter.update(s["hr"])
             now = time.time()
-            writer.writerow([datetime.fromtimestamp(now).isoformat(), now, s["flex"], s["gsr"], s["hr"], s["spo2"], s["temp"]])
+            writer.writerow([datetime.fromtimestamp(now).isoformat(), now, s["flex"], s["hr"], s["spo2"], s["temp"]])
             csv_file.flush()
 
             for k in bufs:
                 bufs[k].append(s[k] if s[k] is not None else float("nan"))
-            line_gsr.set_data(range(len(bufs["gsr"])), list(bufs["gsr"]))
             line_breath.set_data(range(len(bufs["flex"])), list(bufs["flex"]))
             line_hr.set_data(range(len(bufs["hr"])), list(bufs["hr"]))
-            for ax in (ax_gsr, ax_breath):
-                ax.relim()
-                ax.autoscale_view(False, True, True)
+            ax_breath.relim()
+            ax_breath.autoscale_view(False, True, True)
             ax_hr.set_xlim(0, MAX_POINTS)
             fig.canvas.draw()
             fig.canvas.flush_events()

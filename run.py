@@ -5,7 +5,7 @@
     python run.py         (Windows)
 
 Uses the real Arduino, camera and mic. Add --fake-body to replace only the Arduino's
-body signals (GSR, heart rate, breathing) with fake ones; the camera and mic stay real:
+body signals (heart rate, breathing) with fake ones; the camera and mic stay real:
 
     python3 run.py --fake-body
 

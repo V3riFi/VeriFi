@@ -10,7 +10,6 @@ export const GROUPS = [
 // baseline's mean/std. `direction` says which way counts as a reaction:
 // "up" flags values above the normal range, "down" below it, "both" either side.
 export const SIGNALS = [
-  { key: 'gsr', field: 'gsr', label: 'Skin conductance', unit: 'raw', direction: 'up', minSpan: 40, source: 'gsr', group: 'body' },
   { key: 'hr', field: 'hr', label: 'Heart rate', unit: 'bpm', direction: 'up', minSpan: 16, source: 'pulse', group: 'body' },
   { key: 'spo2', field: 'spo2', label: 'Blood oxygen', unit: '%', direction: 'both', minSpan: 4, source: 'pulse', group: 'body' },
   { key: 'temp', field: 'temp', label: 'Temperature', unit: '°C', direction: 'both', minSpan: 1, source: 'pulse', group: 'body' },
@@ -28,11 +27,9 @@ export const SIGNALS = [
     group: 'body',
   },
   { key: 'blink', field: 'blink_rate', label: 'Blink rate', unit: 'per min', direction: 'both', minSpan: 8, source: 'face', group: 'face' },
-  { key: 'hand', field: 'hand_on_face', label: 'Hand on face', unit: '', direction: 'up', boolean: true, source: 'face', group: 'face' },
   { key: 'lip', field: 'lip_compression', label: 'Lip compression', unit: '', direction: 'up', minSpan: 0.4, source: 'face', group: 'face' },
   // Voice values (except loudness) are null while the subject is quiet, so these charts only fill in during answers.
   // Normal ranges come from the voice baseline, where the subject reads sentences aloud.
-  { key: 'tension', field: 'vocal_tension', label: 'Vocal tension', unit: 'SD', direction: 'up', minSpan: 4, zScore: true, source: 'voice', group: 'voice' },
   { key: 'pitch', field: 'pitch', label: 'Voice pitch', unit: 'Hz', direction: 'up', minSpan: 40, source: 'voice', group: 'voice' },
   { key: 'hnr', field: 'hnr', label: 'Voice clarity (HNR)', unit: 'dB', direction: 'down', minSpan: 6, source: 'voice', group: 'voice' },
   { key: 'jitter', field: 'jitter', label: 'Jitter', unit: '%', direction: 'up', minSpan: 1, source: 'voice', group: 'voice' },
@@ -55,10 +52,8 @@ export function thresholdsFor(signal, baseline) {
   if (signal.key === 'stress') {
     return { mean: 0, std: null, rangeLow: 0, rangeHigh: baseline.stressAlert, upper: baseline.stressAlert, lower: null }
   }
-  // Vocal tension is already in SDs from the voice baseline, so its normal range is fixed.
-  const voiceBaseline = Number.isFinite(baseline.std.pitch)
-  const mean = signal.zScore ? (voiceBaseline ? 0 : null) : baseline.mean[signal.field]
-  const std = signal.zScore ? 1 : baseline.std[signal.field]
+  const mean = baseline.mean[signal.field]
+  const std = baseline.std[signal.field]
   if (!Number.isFinite(mean) || !Number.isFinite(std)) return null
   const rangeLow = mean - baseline.alertSd * std
   const rangeHigh = mean + baseline.alertSd * std

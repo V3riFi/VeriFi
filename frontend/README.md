@@ -12,7 +12,7 @@ Start the backend first (`uvicorn backend.server:app --port 8000` from the repo 
 
 ## What's on screen
 
-- **Navbar:** status of each part of the rig (backend, Arduino, GSR, pulse, breathing belt, camera, face tracking, voice), from the backend's `status` message.
+- **Navbar:** status of each part of the rig (backend, Arduino, pulse, breathing belt, camera, face tracking, voice), from the backend's `status` message.
 - **Live video:** webcam frames sent by the backend. The browser never opens the camera itself.
 - **Session:** a name (defaults to Session 1, 2, 3 ...) and Start / Stop. The first part of each session records the baseline.
 - **Signal tiles:** current value of every signal and how far it is from baseline. Click one to show its chart.
