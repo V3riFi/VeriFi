@@ -42,10 +42,14 @@ function lineStroke(u, thresholds) {
   const { top, height } = u.bbox
   const fraction = (value) => Math.min(1, Math.max(0, (u.valToPos(value, 'y', true) - top) / height))
   const gradient = u.ctx.createLinearGradient(0, top, 0, top + height)
-  const upper = fraction(thresholds.upper)
-  gradient.addColorStop(0, alert)
-  gradient.addColorStop(upper, alert)
-  gradient.addColorStop(upper, line)
+  if (thresholds.upper !== null) {
+    const upper = fraction(thresholds.upper)
+    gradient.addColorStop(0, alert)
+    gradient.addColorStop(upper, alert)
+    gradient.addColorStop(upper, line)
+  } else {
+    gradient.addColorStop(0, line)
+  }
   if (thresholds.lower !== null) {
     const lower = fraction(thresholds.lower)
     gradient.addColorStop(lower, line)
@@ -99,8 +103,8 @@ function drawUnderlay(u, view) {
 
   if (thresholds) {
     const xStart = Math.max(left, u.valToPos(session.baselineEndT, 'x', true))
-    const yTop = u.valToPos(thresholds.upper, 'y', true)
-    const yBottom = u.valToPos(isStress ? 0 : thresholds.rangeLow, 'y', true)
+    const yTop = u.valToPos(thresholds.rangeHigh, 'y', true)
+    const yBottom = u.valToPos(thresholds.rangeLow, 'y', true)
     ctx.fillStyle = c.normal
     ctx.fillRect(xStart, yTop, left + width - xStart, yBottom - yTop)
 
@@ -206,7 +210,7 @@ function buildOptions({ signal, width, height, viewRef, readoutRef, labelQuestio
           // Keep the whole normal range in view so the baseline is always visible.
           if (thresholds) {
             min = Math.min(min, thresholds.rangeLow)
-            max = Math.max(max, thresholds.upper)
+            max = Math.max(max, thresholds.rangeHigh)
           }
           const span = Math.max(max - min, signal.minSpan)
           const mid = (min + max) / 2

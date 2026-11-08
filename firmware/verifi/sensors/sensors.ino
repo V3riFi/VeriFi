@@ -50,9 +50,8 @@ void loop() {
       MAX30102.getHeartbeatSPO2();
 
       int rawHR = MAX30102._sHeartbeatSPO2.Heartbeat;
-      if (rawHR > 0) {
-        lastHR = rawHR;              // <-- direct assignment, no averaging
-      }
+      // No valid reading (finger off, still locking on) -> 0, which the backend shows as missing
+      lastHR = rawHR > 0 ? rawHR : 0;
       lastSPO2 = MAX30102._sHeartbeatSPO2.SPO2;
       lastTemp = MAX30102.getTemperature_C();
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { IS_DEMO, askQuestion, dismissError, startSession, stopSession } from '../lib/store'
+import { IS_DEMO, askQuestion, dismissError, endQuestion, startSession, stopSession } from '../lib/store'
 import { formatDuration } from '../lib/format'
 
 function useNow() {
@@ -63,7 +63,7 @@ function ActiveSession({ session }) {
           <Countdown label="Voice baseline recording" startT={session.voice.startT} endT={session.voice.endT} now={now} />
         </div>
       ) : (
-        <AskQuestion count={session.questions.length} />
+        <AskQuestion questions={session.questions} />
       )}
       <button className="button-stop" type="button" onClick={stopSession}>
         Stop session
@@ -73,9 +73,12 @@ function ActiveSession({ session }) {
 }
 
 // Press Ask (or Space anywhere outside a text field) the moment you start asking,
-// so the response window lines up with the question.
-function AskQuestion({ count }) {
+// so the response window lines up with the question. Then press Done asking (or
+// Space again) the moment you finish: response latency is measured from there.
+function AskQuestion({ questions }) {
   const [text, setText] = useState('')
+  const last = questions[questions.length - 1]
+  const asking = Boolean(last && last.endT === null && !last.responded)
 
   const ask = () => {
     askQuestion(text)
@@ -88,12 +91,27 @@ function AskQuestion({ count }) {
       const tag = event.target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || event.target?.isContentEditable) return
       event.preventDefault()
-      askQuestion()
+      if (asking) endQuestion()
+      else askQuestion()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [asking])
 
+  if (asking) {
+    return (
+      <div className="session-form">
+        <p className="session-note">
+          <strong>Asking {last.label}.</strong> Press Done asking (or Space) the moment you finish the question.
+        </p>
+        <button className="button-primary" type="button" onClick={endQuestion} autoFocus>
+          Done asking
+        </button>
+      </div>
+    )
+  }
+
+  const count = questions.length
   return (
     <form
       className="session-form"

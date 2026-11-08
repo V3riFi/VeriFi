@@ -73,6 +73,7 @@ export default function App() {
             components={state.components}
             openKeys={openKeys}
             onToggle={toggle}
+            session={viewed}
           />
 
           <div className="view-head">
