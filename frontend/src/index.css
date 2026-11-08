@@ -496,6 +496,123 @@ input:focus-visible {
 
 /* Tiles */
 
+.signal-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.signal-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.signal-group > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.signal-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.signal-group > summary::before {
+  content: '▸';
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.signal-group[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.signal-group > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+
+.signal-group-title {
+  font-weight: 650;
+}
+
+.signal-group > .tiles {
+  padding: 0 12px 12px;
+}
+
+.answers,
+.answers-empty {
+  padding: 0 12px 12px;
+}
+
+.answers-empty,
+.answers-help {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.answers-title {
+  margin: 4px 0 8px;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.answers-scroll {
+  overflow-x: auto;
+}
+
+.answers table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.answers th,
+.answers td {
+  padding: 6px 8px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--grid);
+}
+
+.answers th:first-child {
+  text-align: left;
+}
+
+.answers thead th {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.answers thead small {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.answers .answers-key {
+  color: var(--text);
+}
+
+.answers-reading {
+  color: var(--text-secondary);
+  background: var(--band);
+}
+
+.answers-note {
+  text-align: left !important;
+  color: var(--text-muted);
+}
+
+.answers-help {
+  margin: 8px 0 0;
+}
+
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

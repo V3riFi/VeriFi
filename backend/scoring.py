@@ -21,10 +21,10 @@ MIN_STD = {
     "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
     # Voice: only present while the subject talks, so it gets its own baseline from the
     # voice phase (subject reads VOICE_SENTENCES) instead of the silent one. Drawn on
-    # the dashboard, not part of stress or spike yet.
-    "pitch": 5.0, "jitter": 0.2,
+    # the dashboard and used for vocal tension, not part of stress or spike.
+    "pitch": 5.0, "jitter": 0.2, "shimmer": 0.5, "voice_db": 2.0, "hnr": 1.0, "spectral_slope": 1.0,
 }
-VOICE_KEYS = ("pitch", "jitter")
+VOICE_KEYS = ("pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope")
 SENSOR_KEYS = tuple(k for k in MIN_STD if k not in VOICE_KEYS)
 MIN_VOICE_SAMPLES = 20  # voiced samples needed for a voice baseline (~2 s of speech at 10 Hz)
 
@@ -88,12 +88,17 @@ def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | 
     return round(float((len(rises) - 1) / (rises[-1] - rises[0]) * 60), 1)
 
 
+# Signals that are negative for real. For every other one, a negative value is a sensor's "no reading".
+SIGNED = {"hnr", "spectral_slope", "vocal_tension"}
+
+
 def column(samples: list[dict], key: str) -> np.ndarray:
-    """Values of one signal as floats. Missing values (None, negative, hr of 0) become NaN."""
+    """Values of one signal as floats. Missing values (None, negative sensor values, hr of 0) become NaN."""
     out = np.full(len(samples), np.nan)
+    signed = key in SIGNED
     for i, s in enumerate(samples):
         v = s.get(key)
-        if v is None or v < 0 or (key == "hr" and v == 0):
+        if v is None or (v < 0 and not signed) or (key == "hr" and v == 0):
             continue
         out[i] = v
     return out
@@ -138,8 +143,14 @@ class Baseline:
         return fewest
 
     def add_voice(self, samples: list[dict]) -> int:
-        """Voice baseline from the voice phase. Returns how many voiced samples it had."""
-        return self.add(samples, VOICE_KEYS, MIN_VOICE_SAMPLES)
+        """Voice baseline from the voice phase. Returns how many voiced samples it had.
+
+        Only samples where the subject is speaking (pitch present) count, so the
+        silences between sentences don't pull loudness down.
+        """
+        voiced = [s for s in samples if s.get("pitch") is not None]
+        self.add(voiced, VOICE_KEYS, MIN_VOICE_SAMPLES)
+        return len(voiced)
 
     def z(self, key: str, value: float) -> float:
         return (value - self.mean[key]) / self.std[key]
@@ -179,6 +190,22 @@ def stress(recent: list[dict], baseline: Baseline) -> float | None:
     if total_weight == 0:
         return None
     return float(np.clip(weighted_sum / total_weight / STRESS_FULL_SCALE_SD * 100, 0, 100))
+
+
+# Vocal tension: louder, more jitter and shimmer, steeper spectral slope, each in SDs
+# from the voice baseline, averaged. Steeper = more negative slope, hence the -1.
+# TUNE: much of the research finds a tense (pressed) voice has a FLATTER slope; flip
+# spectral_slope to +1 if real data agrees.
+TENSION_PARTS = {"voice_db": 1.0, "jitter": 1.0, "shimmer": 1.0, "spectral_slope": -1.0}
+
+
+def vocal_tension(sample: dict, baseline: Baseline) -> float | None:
+    """SDs above the voice baseline, while the subject is speaking. None when silent or no voice baseline."""
+    if sample.get("pitch") is None:
+        return None
+    parts = [sign * baseline.z(key, sample[key]) for key, sign in TENSION_PARTS.items()
+             if key in baseline.mean and sample.get(key) is not None]
+    return float(np.mean(parts)) if len(parts) >= 2 else None
 
 
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:

@@ -4,7 +4,8 @@ Run from the repo root:  uvicorn backend.server:app --port 8000
 
 Owns the WebSocket at /ws (see "WebSocket contract" in README): runs the
 interrogation session (baseline -> questions -> responses -> summary),
-adds the live stress indicator to samples, and logs every session to data/.
+adds the live stress indicator to samples, and logs every session to data/
+(a CSV of every sample and event, plus the session's audio as a WAV with the same name).
 
 Data source:
   - default: the Arduino over USB serial (backend/serial_io.py), auto-detected
@@ -65,7 +66,14 @@ SPEECH_MARGIN_DB = 6.0
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
-VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db"]
+VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope", "vocal_tension"]
+SPEECH_KEYS = ("pitch", "jitter", "shimmer", "hnr", "spectral_slope")  # None unless the subject is speaking
+# After "Done asking", the answer gets this long before its response is sent.
+ANSWER_S = 10.0
+# Per-answer voice features: the "voice" object in "response" (see voice/live.py answer_features).
+ANSWER_KEYS = ["latency_s", "latency_marked", "duration_s", "speech_rate", "pauses", "pause_s",
+               "pitch", "intonation", "hnr", "tension", "cut"]
+VOICE_RESULT_TIMEOUT_S = 5.0
 FACE_KEYS = ["blink_rate", "hand_on_face", "lip_compression"]
 SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "temp", "spo2", *FACE_KEYS, *VOICE_KEYS]
 
@@ -136,9 +144,14 @@ class FakeSignals:
 
 
 class SessionLog:
-    """One CSV per session in data/: every sample plus event rows (baseline, question, response, stop)."""
+    """One CSV per session in data/: every sample plus event rows (baseline, question, response, answer, stop).
 
-    COLUMNS = ["t", *SIGNAL_KEYS, "stress", "event", "label", "spike", "text", "stimulus"]
+    The session's audio is saved next to it with the same name (.wav); the "audio_start"
+    row gives the laptop time of the WAV's first sample, so CSV times map onto the audio.
+    """
+
+    COLUMNS = ["t", *SIGNAL_KEYS, "stress", "event", "label", "spike", "text", "stimulus",
+               *(f"answer_{k}" for k in ANSWER_KEYS)]
 
     def __init__(self, subject: str, started: float) -> None:
         DATA_DIR.mkdir(exist_ok=True)
@@ -152,6 +165,8 @@ class SessionLog:
         self.writer.writerow(sample)
 
     def event(self, t: float, event: str, **fields) -> None:
+        if self.file.closed:  # a late answer after stop
+            return
         self.writer.writerow({"t": round(t, 3), "event": event, **fields})
         self.file.flush()
 
@@ -169,13 +184,18 @@ class Session:
         self.voice_start: float | None = None
         self.voice_end: float | None = None
         self.voice_done = False
+        self.reading: dict | None = None  # the voice baseline's speech features, to compare answers with
         self.room_db: float | None = None  # median mic loudness during the silent baseline
         self.samples: list[dict] = []
         self.recent: deque[dict] = deque()  # last STRESS_WINDOW_S seconds
         self.stress: float | None = None
-        self.questions: list[dict] = []  # {"label", "t", "spike", "signals", "done"}
+        # {"label", "t", "end", "due", "spike", "signals", "voice", "done"}. "end" is the
+        # "Done asking" click (None if not clicked); "due" is when the response is scored.
+        self.questions: list[dict] = []
+        self.tasks: set[asyncio.Task] = set()  # answers being analyzed
         self.log = SessionLog(subject, now)
         self.log.event(now, "baseline_start", label=subject)
+        self.recording = voice.start_recording(self.log.path.with_suffix(".wav"))
 
     @property
     def ready(self) -> bool:
@@ -186,32 +206,69 @@ class Session:
         if self.voice_start is None:
             return None
         return {"start": round(self.voice_start, 3), "end": round(self.voice_end, 3),
-                "sentences": VOICE_SENTENCES, "done": self.voice_done}
+                "sentences": VOICE_SENTENCES, "done": self.voice_done, "reading": self.reading}
 
     def next_label(self) -> str:
         return f"Q{len(self.questions) + 1}"
 
+    def speech_floor(self) -> float | None:
+        """Loudness (dB) above which the mic counts as someone speaking, once the room is measured."""
+        return None if self.room_db is None else self.room_db + SPEECH_MARGIN_DB
+
     def ask(self, now: float, label: str, text: str | None, stimulus: str | None) -> dict:
-        self.questions.append({"label": label, "t": now, "spike": None, "signals": {}, "done": False})
+        self.questions.append({"label": label, "t": now, "end": None, "due": now + scoring.WINDOW_S,
+                               "spike": None, "signals": {}, "voice": None, "done": False})
         self.log.event(now, "question", label=label, text=text or "", stimulus=stimulus or "")
         return {"type": "question", "t": round(now, 3), "label": label, "phase": "start"}
 
-    def score(self, q: dict) -> dict:
+    def end_question(self, now: float) -> dict | None:
+        """The interrogator finished asking. None if no question is waiting for it."""
+        open_questions = [q for q in self.questions if not q["done"] and q["end"] is None]
+        if not open_questions:
+            return None
+        q = open_questions[-1]
+        q["end"] = now
+        q["due"] = max(q["due"], now + ANSWER_S)  # give the answer its full window
+        self.log.event(now, "question_end", label=q["label"])
+        return {"type": "question", "t": round(now, 3), "label": q["label"], "phase": "end"}
+
+    def score(self, q: dict, now: float) -> dict:
+        """Physiology part of the response. The voice part is added by finish_answer()."""
         lo = q["t"] - scoring.PRE_S - scoring.HOLD_RANGE_S
         hi = q["t"] + scoring.WINDOW_S
         window = [s for s in self.samples if lo <= s["t"] <= hi]
         q["spike"], q["signals"] = scoring.response(window, q["t"], self.baseline)
         q["done"] = True
-        now = self.samples[-1]["t"] if self.samples else q["t"]
         self.log.event(now, "response", label=q["label"], spike=q["spike"])
-        return {"type": "response", "t": round(now, 3), "label": q["label"], "spike": q["spike"], "signals": q["signals"]}
+        return {"type": "response", "t": round(now, 3), "label": q["label"], "spike": q["spike"],
+                "signals": q["signals"], "voice": None, "_question": q}
+
+    def answer_request(self, q: dict, until: float):
+        """Queues the voice analysis of this question's answer (a Future, or None without a mic)."""
+        marked = q["end"] is not None
+        return voice.analyze_answer(q["end"] if marked else q["t"], until, marked, self.speech_floor())
+
+    def finish_answer(self, q: dict, result: dict | None, t: float) -> dict | None:
+        """Stores the answer's voice features (adding vocal tension from the samples) and logs them."""
+        if not result:
+            return None
+        answer = {k: v for k, v in result.items() if k not in ("onset", "offset")}
+        if result["onset"] is not None:
+            tension = [s["vocal_tension"] for s in self.samples
+                       if result["onset"] <= s["t"] <= result["offset"] and s.get("vocal_tension") is not None]
+            answer["tension"] = round(float(sum(tension) / len(tension)), 2) if tension else None
+        else:
+            answer["tension"] = None
+        q["voice"] = answer
+        self.log.event(t, "answer", label=q["label"], **{f"answer_{k}": answer.get(k) for k in ANSWER_KEYS})
+        return answer
 
     def on_sample(self, sample: dict) -> list[dict]:
         """Adds stress to the sample, logs it, and returns any session messages it triggers."""
         t = sample["t"]
         if self.room_db is not None and sample.get("voice_db") is not None \
                 and sample["voice_db"] < self.room_db + SPEECH_MARGIN_DB:
-            for key in ("pitch", "jitter", "shimmer"):
+            for key in SPEECH_KEYS:
                 sample[key] = None  # room noise, not the subject
         self.samples.append(sample)
         self.recent.append(sample)
@@ -241,34 +298,47 @@ class Session:
             self.voice_done = True
             voiced = self.baseline.add_voice([s for s in self.samples if self.voice_start <= s["t"] <= t])
             self.log.event(t, "voice_baseline_done")
-            events.append({"type": "voice_baseline", "t": round(t, 3), "phase": "done",
-                           "voiced_samples": voiced, **self.baseline.as_message()})
+            event = {"type": "voice_baseline", "t": round(t, 3), "phase": "done",
+                     "voiced_samples": voiced, **self.baseline.as_message(), "reading": None,
+                     "_reading": voice.analyze_answer(self.voice_start, t, True, self.speech_floor())}
             if voiced < scoring.MIN_VOICE_SAMPLES:
-                events.append({"type": "error", "message": "Didn't hear enough speech for the voice baseline, "
-                               "so voice has no normal range this session. Check the microphone."})
+                event["_error"] = ("Didn't hear enough speech for the voice baseline, "
+                                   "so voice has no normal range this session. Check the microphone.")
+            events.append(event)
 
         if self.baseline is not None:
             raw = scoring.stress(list(self.recent), self.baseline)
             if raw is not None:
                 self.stress = raw if self.stress is None else self.stress + STRESS_SMOOTHING * (raw - self.stress)
                 sample["stress"] = round(self.stress)
+            if self.voice_done:
+                tension = scoring.vocal_tension(sample, self.baseline)
+                sample["vocal_tension"] = None if tension is None else round(tension, 2)
 
         for q in self.questions:
-            if not q["done"] and t >= q["t"] + scoring.WINDOW_S:
-                events.append(self.score(q))
+            if not q["done"] and t >= q["due"]:
+                events.append(self.score(q, t))
 
         self.log.sample(sample)
         return events
 
-    def stop(self, now: float) -> list[dict]:
-        """Scores unfinished questions with the data so far, then returns them plus the summary."""
-        events = [self.score(q) for q in self.questions if not q["done"]] if self.baseline else []
+    def finish(self, now: float) -> list[dict]:
+        """Scores unfinished questions with the data so far (stop)."""
+        return [self.score(q, now) for q in self.questions if not q["done"]] if self.baseline else []
+
+    def close(self, now: float) -> dict:
+        """Ends the session: the ranked summary, the audio file closed, the CSV closed."""
         ranked = sorted(self.questions, key=lambda q: q["spike"] if q["spike"] is not None else -math.inf, reverse=True)
-        events.append({"type": "summary", "questions": [{"label": q["label"], "spike": q["spike"]} for q in ranked]})
+        summary = {"type": "summary", "questions": [
+            {"label": q["label"], "spike": q["spike"], "latency_s": (q["voice"] or {}).get("latency_s")}
+            for q in ranked]}
+        audio = voice.stop_recording() if self.recording else None
+        if audio and audio[1] is not None:
+            self.log.event(audio[1], "audio_start", label=audio[0].name, text=f"{audio[2]:.1f} s")
         self.log.event(now, "stop")
         self.log.close()
-        print(f"session saved to {self.log.path}", flush=True)
-        return events
+        print(f"session saved to {self.log.path}" + (f" and {audio[0]}" if audio else ""), flush=True)
+        return summary
 
 
 session: Session | None = None
@@ -315,7 +385,8 @@ def status_message() -> dict:
             "baseline": session.baseline.as_message() if session.baseline else None,
             "voice_baseline": session.voice_message(),
             "questions": [
-                {"label": q["label"], "t": round(q["t"], 3), "spike": q["spike"], "signals": q["signals"]}
+                {"label": q["label"], "t": round(q["t"], 3), "end": None if q["end"] is None else round(q["end"], 3),
+                 "spike": q["spike"], "signals": q["signals"], "voice": q["voice"], "done": q["done"]}
                 for q in session.questions
             ],
         },
@@ -357,10 +428,48 @@ async def handle_sample(sample: dict) -> None:
     for key in ("gsr", "hr", "spo2", "temp", "flex", *FACE_KEYS):
         if sample.get(key) is not None:
             last_seen[key] = now
-    events = session.on_sample(sample) if session else []
+    current = session
+    events = current.on_sample(sample) if current else []
     await broadcast(sample)
     for event in events:
+        if "_question" in event or "_reading" in event:
+            # Waits for the voice analysis (a fraction of a second) without holding up samples.
+            task = asyncio.create_task(deliver(current, event))
+            current.tasks.add(task)
+            task.add_done_callback(current.tasks.discard)
+        else:
+            await broadcast(event)
+
+
+async def voice_result(future, label: str):
+    """The voice thread's answer analysis, or None if there's no mic or it failed."""
+    if future is None:
+        return None
+    try:
+        return await asyncio.wait_for(asyncio.wrap_future(future), VOICE_RESULT_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001 - voice is optional; the response still goes out
+        print(f"voice: couldn't analyze {label} ({e!r})", flush=True)
+        return None
+
+
+async def deliver(current: Session, event: dict) -> None:
+    """Adds the voice part to a response or voice-baseline message, then sends it."""
+    try:
+        if "_question" in event:
+            q = event.pop("_question")
+            result = await voice_result(current.answer_request(q, event["t"]), q["label"])
+            event["voice"] = current.finish_answer(q, result, event["t"])
+        else:
+            reading = await voice_result(event.pop("_reading"), "the voice baseline")
+            if reading:
+                current.reading = {k: reading[k] for k in ("duration_s", "speech_rate", "pauses", "pitch", "intonation", "hnr")}
+            event["reading"] = current.reading
+        error = event.pop("_error", None)
         await broadcast(event)
+        if error:
+            await broadcast({"type": "error", "message": error})
+    except Exception as e:  # noqa: BLE001 - never lose a response silently
+        print(f"deliver: {e!r}", flush=True)
 
 
 async def fake_loop() -> None:
@@ -414,13 +523,13 @@ async def lifespan(app: FastAPI):
     yield
     for task in tasks:
         task.cancel()
+    if session:
+        session.close(time.time())  # before voice.stop(), so the audio file is logged
     face.stop()
     camera.stop()
     voice.stop()
     if serial_reader:
         serial_reader.stop()
-    if session:
-        session.log.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -465,13 +574,23 @@ async def handle(message: dict) -> str | None:
         if FAKE:
             fake.react(now)
 
+    elif kind == "question_end":
+        if not session:
+            return "No session running."
+        event = session.end_question(now)
+        if event is None:
+            return "No question is waiting for Done asking."
+        await broadcast(event)
+
     elif kind == "stop":
         if not session:
             return "No session running."
-        events = session.stop(now)
-        session = None
-        for event in events:
-            await broadcast(event)
+        ending, session = session, None
+        for event in ending.finish(now):
+            await deliver(ending, event)
+        if ending.tasks:  # answers still being analyzed
+            await asyncio.wait(ending.tasks, timeout=VOICE_RESULT_TIMEOUT_S)
+        await broadcast(ending.close(now))
 
     else:
         return f"Unknown message type: {kind!r}"

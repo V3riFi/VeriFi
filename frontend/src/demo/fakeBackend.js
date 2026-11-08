@@ -225,8 +225,16 @@ class Session {
 
   ask(now) {
     const label = `Q${this.questions.length + 1}`
-    this.questions.push({ label, t: now, spike: null, signals: {}, done: false })
+    this.questions.push({ label, t: now, end: null, spike: null, signals: {}, done: false })
     return { type: 'question', t: round(now, 3), label, phase: 'start' }
+  }
+
+  // "Done asking". The demo has no microphone, so it only echoes it (no latency).
+  endQuestion(now) {
+    const q = this.questions.findLast((x) => !x.done && x.end === null)
+    if (!q) return null
+    q.end = now
+    return { type: 'question', t: round(now, 3), label: q.label, phase: 'end' }
   }
 
   score(q) {
@@ -234,7 +242,7 @@ class Session {
     ;[q.spike, q.signals] = response(window, q.t, this.baseline)
     q.done = true
     const now = this.samples.length ? this.samples[this.samples.length - 1].t : q.t
-    return { type: 'response', t: round(now, 3), label: q.label, spike: q.spike, signals: q.signals }
+    return { type: 'response', t: round(now, 3), label: q.label, spike: q.spike, signals: q.signals, voice: null }
   }
 
   onSample(sample) {
@@ -276,7 +284,15 @@ class Session {
       started: round(this.started, 3),
       baseline_end: round(this.baselineEnd, 3),
       baseline: this.baseline ? this.baseline.asMessage() : null,
-      questions: this.questions.map((q) => ({ label: q.label, t: round(q.t, 3), spike: q.spike, signals: q.signals })),
+      questions: this.questions.map((q) => ({
+        label: q.label,
+        t: round(q.t, 3),
+        end: q.end === null ? null : round(q.end, 3),
+        spike: q.spike,
+        signals: q.signals,
+        voice: null,
+        done: q.done,
+      })),
     }
   }
 }
@@ -318,6 +334,12 @@ export function connectDemo({ onMessage, onStatus }) {
       emit(session.ask(sample.t))
       fake.react(sample.t)
       session.nextQuestionAt = sample.t + uniform(...QUESTION_EVERY_S)
+      session.autoEndAt = sample.t + 2 // the automatic question "finishes asking" after 2 s
+    }
+    if (session?.autoEndAt && sample.t >= session.autoEndAt) {
+      session.autoEndAt = null
+      const end = session.endQuestion(sample.t)
+      if (end) emit(end)
     }
   }, 1000 / SAMPLE_HZ)
 
@@ -337,8 +359,13 @@ export function connectDemo({ onMessage, onStatus }) {
             return emit({ type: 'error', message: 'Still recording the baseline. Wait for it to finish.' })
           }
           session.nextQuestionAt = null // the operator is asking now; stop the automatic questions
+          session.autoEndAt = null
           emit(session.ask(now))
           fake.react(now)
+        } else if (message.type === 'question_end') {
+          if (!session) return emit({ type: 'error', message: 'No session running.' })
+          const end = session.endQuestion(now)
+          emit(end ?? { type: 'error', message: 'No question is waiting for Done asking.' })
         } else if (message.type === 'stop') {
           if (!session) return emit({ type: 'error', message: 'No session running.' })
           const events = session.stop()

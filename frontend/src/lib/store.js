@@ -136,6 +136,21 @@ function toVoice(remote) {
     endT: remote.end,
     sentences: Array.isArray(remote.sentences) ? remote.sentences.map(String) : [],
     done: Boolean(remote.done),
+    reading: remote.reading ?? null, // the reading's speech features, compared with each answer
+  }
+}
+
+// A question as the dashboard keeps it. endT: when "Done asking" was clicked (null if not);
+// responded: its "response" arrived; voice: that response's per-answer voice features.
+function toQuestion(remote, fallbackLabel) {
+  return {
+    label: String(remote.label ?? fallbackLabel),
+    t: remote.t,
+    endT: Number.isFinite(remote.end) ? remote.end : null,
+    spike: toNumber(remote.spike),
+    signals: remote.signals ?? {},
+    voice: remote.voice ?? null,
+    responded: Boolean(remote.done),
   }
 }
 
@@ -208,7 +223,7 @@ function onVoiceBaseline(message) {
     updateSession(active.id, { voice })
   } else if (message.phase === 'done' && active.voice) {
     updateSession(active.id, {
-      voice: { ...active.voice, endT: message.t, done: true },
+      voice: { ...active.voice, endT: message.t, done: true, reading: message.reading ?? null },
       baseline: toBaseline(message) ?? active.baseline,
     })
   }
@@ -217,7 +232,13 @@ function onVoiceBaseline(message) {
 function onQuestion(message) {
   const active = activeSession()
   if (!active || !Number.isFinite(message.t)) return
-  const question = { label: String(message.label ?? `Q${active.questions.length + 1}`), t: message.t, spike: null, signals: {} }
+  if (message.phase === 'end') {
+    const index = active.questions.findLastIndex((q) => q.label === message.label)
+    if (index === -1) return
+    const questions = active.questions.map((q, i) => (i === index ? { ...q, endT: message.t } : q))
+    return updateSession(active.id, { questions })
+  }
+  const question = toQuestion({ ...message, done: false }, `Q${active.questions.length + 1}`)
   updateSession(active.id, { questions: [...active.questions, question] })
 }
 
@@ -227,7 +248,9 @@ function onResponse(message) {
   const index = active.questions.findLastIndex((q) => q.label === message.label)
   if (index === -1) return
   const questions = active.questions.map((q, i) =>
-    i === index ? { ...q, spike: toNumber(message.spike), signals: message.signals ?? {} } : q,
+    i === index
+      ? { ...q, spike: toNumber(message.spike), signals: message.signals ?? {}, voice: message.voice ?? null, responded: true }
+      : q,
   )
   updateSession(active.id, { questions })
 }
@@ -254,7 +277,7 @@ function onStatus(message) {
       baselineEndT: remote.baseline_end,
       baseline: toBaseline(remote.baseline),
       voice: toVoice(remote.voice_baseline),
-      questions: Array.isArray(remote.questions) ? remote.questions : [],
+      questions: Array.isArray(remote.questions) ? remote.questions.map((q, i) => toQuestion(q, `Q${i + 1}`)) : [],
     })
   } else if (!remote && active && !state.starting) {
     endSession() // the backend no longer has it (stopped elsewhere, or restarted)
@@ -311,6 +334,11 @@ export function askQuestion(text = '') {
   const message = { type: 'question' }
   if (text.trim()) message.text = text.trim()
   if (!socket.send(message)) showError('The backend is offline, so the question was not recorded.')
+}
+
+// The interrogator finished asking: response latency is measured from here.
+export function endQuestion() {
+  if (!socket.send({ type: 'question_end' })) showError('The backend is offline, so the end of the question was not recorded.')
 }
 
 export function stopSession() {

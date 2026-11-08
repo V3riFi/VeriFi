@@ -60,7 +60,7 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
 ```
 
 1. **Baseline.** Subject sits calmly and silently for ~60 s (recorded as the **baseline**). Then the dashboard shows five neutral sentences, which the subject reads aloud for ~25 s: the **voice baseline**.
-2. **Ask.** Interrogator clicks **Ask** (or presses the hardware button) when the question starts; optionally an object or image is shown with it.
+2. **Ask.** Interrogator clicks **Ask** (or presses the hardware button) when the question starts; optionally an object or image is shown with it. The moment the question is finished, they click **Done asking** (or press Space): the subject's response latency is timed from there.
 3. **Answer.** Short answers work best (see Limitations).
 4. **Score.** VeriFi scores the ~10 s window from the question's start and adds a timeline marker showing spike size and which signals drove it.
 5. **Repeat.** At the end, every question is ranked by response.
@@ -75,7 +75,7 @@ cd frontend && npm install && npm run dev     # http://localhost:5173
 | Heart rate | Pulse / SpO2 (finger) | Change from baseline |
 | Breathing | Flex sensor on chest belt | Rate, breath holding |
 | Face | Webcam + MediaPipe Face Landmarker (`openCV/vision`) | Blink rate (Eye Aspect Ratio), hand over face, lip compression. Blinks ignored if head turned >35° or tilted >25° — keep camera at eye level |
-| Voice | Laptop mic + Parselmouth (`voice/live.py`) | Pitch and jitter while talking (shown, not yet part of stress) |
+| Voice | Laptop mic + Parselmouth (`voice/live.py`) | Live: pitch, HNR (voice clarity), jitter, shimmer, loudness, spectral slope and vocal tension. Per answer: response latency, length, speech rate, pauses, pitch, intonation (pitch SD), HNR, tension. Shown in the dashboard's Voice dropdown, not part of stress. Speech errors, repetitions and stuttering need a transcript, which VeriFi doesn't make |
 
 ---
 
@@ -137,9 +137,10 @@ backend/scoring.py         baseline, live stress indicator, per-question scoring
 backend/camera.py          webcam capture thread, sends small JPEG frames
 backend/face.py            runs the CV group's face engine on camera frames
 openCV/                    CV group: face engine (vision/), plus the reaction-time identity test (see openCV/README.md)
-voice/live.py              live voice features for the backend; voice/analyze.py is the standalone recorder
+voice/live.py              the mic: live voice features, per-answer features, and the session's WAV
+                           (python -m voice.live checks the mic; python -m voice.live file.wav analyzes a recording)
 frontend/                  Vite + React dashboard
-data/                      recorded sessions (NOT committed, see CONTRIBUTING.md)
+data/                      recorded sessions: <subject>_<date-time>.csv + .wav (NOT committed, see CONTRIBUTING.md)
 requirements.txt           Python packages (hand-written)
 ```
 
@@ -237,7 +238,8 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
   ─────────────────────       ──────────────────────────────────────────
   start                       sample          ~10/s, live values
   question  (Ask)             baseline        start / done (mean, std)
-  stop                        voice_baseline  start / done
+  question_end (Done asking)  voice_baseline  start / done
+  stop
                               question        timestamped echo (marker)
                               response        ~10 s after a question
                               summary         on stop, ranked
@@ -250,36 +252,39 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 ```json
 {"type": "start",    "subject": "subject04"}
 {"type": "question", "label": "Q3", "text": "Where were you on Tuesday night?", "stimulus": "knife.jpg"}
+{"type": "question_end"}
 {"type": "stop"}
 ```
 
 - `start` — begins a session; baseline is recorded first.
 - `question` — sent on **Ask**. `text` and `stimulus` optional (`stimulus` is the object/image, or `null`). A hardware button press will start a question too (not in the sketch yet).
+- `question_end` — sent on **Done asking**, the moment the interrogator finishes the question. Response latency is timed from here, and the answer gets 10 s from here before the `response` is sent. Without it, latency is estimated (the first 0.5 s silence after the question).
 - `stop` — ends the session.
 
 ### Backend → frontend
 
 ```json
-{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "pitch": 182.4, "jitter": 1.1, "shimmer": 6.3, "voice_db": 61.0, "stress": 41}
+{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "pitch": 182.4, "jitter": 1.1, "shimmer": 6.3, "voice_db": 61.0, "hnr": 14.2, "spectral_slope": -18.5, "vocal_tension": 0.6, "stress": 41}
 {"type": "baseline", "t": 1180.0, "phase": "start", "duration": 60}
 {"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 451.2, "hr": 72.4}, "std": {"gsr": 3.1, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
 {"type": "voice_baseline", "t": 1240.0, "phase": "start", "duration": 25, "sentences": ["I am sitting in a chair right now.", "..."]}
-{"type": "voice_baseline", "t": 1265.0, "phase": "done", "voiced_samples": 140, "mean": {"gsr": 451.2, "pitch": 182.0}, "std": {"gsr": 3.1, "pitch": 9.0}, "alert_sd": 2, "stress_alert": 25}
+{"type": "voice_baseline", "t": 1265.0, "phase": "done", "voiced_samples": 140, "mean": {"gsr": 451.2, "pitch": 182.0}, "std": {"gsr": 3.1, "pitch": 9.0}, "alert_sd": 2, "stress_alert": 25, "reading": {"duration_s": 22.1, "speech_rate": 3.1, "pauses": 4, "pitch": 181.0, "intonation": 24.0, "hnr": 15.2}}
 {"type": "question", "t": 1250.0, "label": "Q3", "phase": "start"}
-{"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"gsr": 2.4, "hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}}
-{"type": "summary",  "questions": [{"label": "Q3", "spike": 2.1}, {"label": "Q1", "spike": 0.4}]}
+{"type": "question", "t": 1252.4, "label": "Q3", "phase": "end"}
+{"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"gsr": 2.4, "hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}, "voice": {"latency_s": 1.4, "latency_marked": true, "duration_s": 2.2, "speech_rate": 3.6, "pauses": 1, "pause_s": 0.5, "pitch": 190.2, "intonation": 18.0, "hnr": 13.1, "tension": 0.9, "cut": false}}
+{"type": "summary",  "questions": [{"label": "Q3", "spike": 2.1, "latency_s": 1.4}, {"label": "Q1", "spike": 0.4, "latency_s": 0.8}]}
 {"type": "status",   "components": {"arduino": "ok", "gsr": "ok", "pulse": "missing", "breathing": "ok", "camera": "ok", "face": "ok", "voice": "off"}, "session": null}
 {"type": "frame",    "t": 1250.1, "jpeg": "<base64 JPEG>"}
 ```
 
 | Type | Notes |
 |---|---|
-| `sample` | ~10/sec from Arduino. `t` = laptop Unix time (s). `stress` is 0–100 and appears only after baseline. **Any field may be `null` or missing** — draw a gap, don't crash. `hr`/`spo2`/`temp` are null until the pulse sensor locks (~4 s); `breath_rate` until ~15 s; `blink_rate` for the first 10 s of face tracking and whenever no face is visible. `hand_on_face` is boolean. Voice fields (`pitch`, `jitter`, `shimmer`, `voice_db`) are null when nobody talks, and all four are missing if the mic is off. `hr` updates in ~4 s steps. `temp` in °C, `spo2` in %. |
+| `sample` | ~10/sec from Arduino. `t` = laptop Unix time (s). `stress` is 0–100 and appears only after baseline. **Any field may be `null` or missing** — draw a gap, don't crash. `hr`/`spo2`/`temp` are null until the pulse sensor locks (~4 s); `breath_rate` until ~15 s; `blink_rate` for the first 10 s of face tracking and whenever no face is visible. `hand_on_face` is boolean. Voice fields (`pitch`, `jitter`, `shimmer`, `hnr`, `spectral_slope`, `vocal_tension`) are null when nobody talks; `voice_db` (loudness) always has a value; all are missing if the mic is off. `hnr` and `spectral_slope` are in dB and can be negative. `vocal_tension` is SDs above the voice baseline (average of loudness, jitter, shimmer and a steeper spectral slope), after the voice baseline only. `hr` updates in ~4 s steps. `temp` in °C, `spo2` in %. |
 | `baseline` | `start` carries the baseline length; `done` carries each signal's `mean`/`std`, plus `alert_sd` and `stress_alert` (the dashboard uses these to draw baseline bands and turn lines red outside them). |
-| `voice_baseline` | Subject reads `sentences` aloud for `duration` s (`VERIFI_VOICE_BASELINE_S`, default 25; `0` skips). `done` carries the baseline again, now with `pitch`/`jitter`. Questions are refused until it's done. Skipped entirely if the mic is broken; if it hears too little speech, an `error` follows and voice has no normal range. The silent baseline also measures room loudness — afterward `pitch`/`jitter`/`shimmer` only count when the voice is ≥6 dB above the room. |
-| `question` | Timestamped echo of the question starting; the dashboard places a marker here. |
-| `response` | Sent ~10 s after a question starts. `spike` = overall response in SD above baseline; `signals` breaks it down per signal (SD, except `breath_hold_s` in seconds). |
-| `summary` | Sent on `stop`. Every question, highest spike first. |
+| `voice_baseline` | Subject reads `sentences` aloud for `duration` s (`VERIFI_VOICE_BASELINE_S`, default 25; `0` skips). `done` carries the baseline again, now with the voice fields (from moments the subject is speaking), plus `reading`: the reading's per-answer features, to compare answers with (`null` if it couldn't be measured). Questions are refused until it's done. Skipped entirely if the mic is broken; if it hears too little speech, an `error` follows and voice has no normal range. The silent baseline also measures room loudness — afterward `pitch`/`jitter`/`shimmer` only count when the voice is ≥6 dB above the room. |
+| `question` | Timestamped echo: `phase` `start` (the dashboard places a marker) or `end` (Done asking). |
+| `response` | Sent ~10 s after a question starts, or 10 s after Done asking if that's later. `voice` holds the answer's voice features (`null` without a mic): `latency_s` (Done asking, or the estimated end of the question when `latency_marked` is false, to the first word), `duration_s` (first to last word), `speech_rate` (syllables/s), `pauses` and `pause_s` (silences of 0.3 s or more), `pitch` (Hz), `intonation` (pitch SD, Hz), `hnr` (dB), `tension` (SD), `cut` (still talking when the window closed). Fields are `null` when no answer was heard. `spike` = overall response in SD above baseline; `signals` breaks it down per signal (SD, except `breath_hold_s` in seconds). |
+| `summary` | Sent on `stop`. Every question, highest spike first, with its `latency_s`. |
 | `status` | ~1/sec and on connect. Each component is `ok`, `missing`, or `off`. `session` describes the running session (or `null`) so a reloaded dashboard can reattach. |
 | `frame` | Webcam, ~10/sec, base64 JPEG ~480 px wide. `VERIFI_CAMERA=off` disables, `VERIFI_CAMERA=1` picks another camera. The Mac terminal needs camera permission. |
 

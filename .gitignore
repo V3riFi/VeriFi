@@ -8,5 +8,7 @@ logs/
 .env
 node_modules/
 .DS_Store
-voice/audio/audio/
-voice/audio/outputs/
+# recordings and voice outputs never go in git (sessions are saved to data/)
+*.wav
+voice/audio/
+voice/outputs/
