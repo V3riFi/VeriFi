@@ -12,9 +12,11 @@ Two ways to use it:
        python -m backend.serial_io --port /dev/cu.usbmodem1101
 
 Matches firmware/verifi/sensors (10 Hz, one labeled line per sample):
+    breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
+The older pulse-module sketches are still accepted:
     breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
-The sketch currently prints "Blood Pressure:" instead of "spo2:" for the
-oxygen value; both are accepted. Lines starting with "STATUS:" are printed, not parsed.
+("Blood Pressure:" also works in place of "spo2:".) Lines starting with "STATUS:"
+are printed, not parsed.
 
 Heart rate is passed through a median-of-3 filter over *distinct* sensor
 readings before being reported. This rejects single-window misdetections
@@ -48,8 +50,9 @@ RECONNECT_S = 2.0
 
 NUM = r"(-?[\d.]+)"
 LINE_RE = re.compile(
-    rf"breath:\s*{NUM},\s*gsr:\s*{NUM},\s*heartbeat:\s*{NUM},"
-    rf"\s*(?:spo2|blood pressure):\s*{NUM},\s*temp:\s*{NUM}",
+    rf"breath:\s*{NUM},\s*gsr:\s*{NUM},\s*heartbeat:\s*{NUM},\s*(?:"
+    rf"(?:spo2|blood pressure):\s*{NUM},\s*temp:\s*{NUM}"
+    rf"|raw_ecg:\s*{NUM},\s*raw_emg:\s*{NUM})",
     re.IGNORECASE,
 )
 
@@ -109,7 +112,9 @@ def parse_line(raw: str) -> dict | None:
     if not m:
         return None
     try:
-        breath, gsr, hr, spo2, temp = (float(g) for g in m.groups())
+        breath, gsr, hr, spo2, temp, _raw_ecg, _raw_emg = (
+            float(g) if g is not None else 0.0 for g in m.groups()
+        )
     except ValueError:
         return None
     return {

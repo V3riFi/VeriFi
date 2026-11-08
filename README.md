@@ -352,6 +352,12 @@ STATUS: MAX30102 ready
 breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
 ```
 
+The current BioAmp ECG/EMG sketch ends each line with `raw_ecg` and `raw_emg` instead of `spo2` and `temp`; both formats are accepted:
+
+```
+breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
+```
+
 | Field | Meaning |
 |---|---|
 | `breath` | Flex sensor raw ADC (0–1023). The backend calls it `flex` and derives `breath_rate` |
