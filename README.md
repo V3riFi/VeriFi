@@ -23,17 +23,15 @@ pip install -r requirements.txt
 python3 openCV/download_models.py
 ```
 
-Then two terminals, both from the repo root with the venv active. This needs to be run every startup:
+Then, every time, one command from the repo root starts the backend and frontend and opens the dashboard in your browser:
 
 ```bash
-# terminal 1 — backend (auto-detects the Arduino)
-uvicorn backend.server:app --port 8000
-
-# terminal 2 — frontend
-cd frontend && npm install && npm run dev     # http://localhost:5173
+python3 run.py     # Windows: python run.py
 ```
 
-`http://localhost:8000/` shows whether the Arduino is connected. Add `VERIFI_BASELINE_S=10` for a 10 s baseline instead of 60 s while testing. Full details in [Setup](#setup).
+It uses the real Arduino, camera and mic. `python3 run.py --fake-body` replaces only the body sensors (GSR, heart rate, breathing) with fake signals and keeps the camera and mic real. Press **Ctrl+C** to stop everything. To run the backend and frontend separately (for example with `VERIFI_FAKE=1`), see [Run](#6-run-backend--frontend).
+
+`http://localhost:8000/` shows whether the Arduino is connected. For a 10 s baseline instead of 60 s while testing: `VERIFI_BASELINE_S=10 python3 run.py`. Full details in [Setup](#setup).
 
 ---
 
