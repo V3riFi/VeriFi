@@ -32,20 +32,16 @@ export default function VideoFeed({ connection, cameraStatus }) {
     }
   }, [])
 
+  // The frame only: the "Live video" dropdown around it (App.jsx) carries the title.
   return (
-    <section className="card video" aria-label="Live video">
-      <div className="card-head">
-        <h2 className="section-title">Live video</h2>
-        {hasVideo && (
-          <span className="live-tag">
-            <span className="live-dot" aria-hidden="true" /> Live
-          </span>
-        )}
-      </div>
-      <div className="video-frame">
-        <img ref={imageRef} alt="Live camera view of the subject" hidden={!hasVideo} />
-        {!hasVideo && <p className="video-placeholder">{placeholderText(connection, cameraStatus)}</p>}
-      </div>
-    </section>
+    <div className="video-frame">
+      <img ref={imageRef} alt="Live camera view of the subject" hidden={!hasVideo} />
+      {hasVideo && (
+        <span className="live-tag video-live">
+          <span className="live-dot" aria-hidden="true" /> Live
+        </span>
+      )}
+      {!hasVideo && <p className="video-placeholder">{placeholderText(connection, cameraStatus)}</p>}
+    </div>
   )
 }
