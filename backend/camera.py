@@ -23,7 +23,7 @@ import time
 
 FRAME_WIDTH = 480
 JPEG_QUALITY = 70
-SEND_FPS = 10
+SEND_FPS = 30  # cap on dashboard video; most webcams give 30, so every frame goes out
 REOPEN_EVERY_S = 5.0
 
 
@@ -58,7 +58,7 @@ class Camera:
     def latest_frame(self):
         """(capture time, full-size BGR numpy frame) of the newest frame, or None. For vision.
 
-        Every camera frame, not just the ~10/s sent to the dashboard. Don't modify the
+        Every camera frame, even above SEND_FPS. Don't modify the
         array in place; copy it first if you need to draw on it.
         """
         with self._lock:
@@ -81,7 +81,7 @@ class Camera:
         import cv2
 
         capture = self._capture
-        last_encode = 0.0
+        next_encode = 0.0
         while not self._stop.is_set():
             if capture is None:
                 self.status = "missing"
@@ -99,9 +99,11 @@ class Camera:
             now = time.time()
             with self._lock:
                 self._raw = (now, frame)  # read() gives a new array each time, so sharing it is safe
-            if now - last_encode < 1 / SEND_FPS:
+            # A schedule, not "time since the last one": frames arrive unevenly (one late,
+            # the next right behind it), and a spacing check would drop the second.
+            if now < next_encode:
                 continue
-            last_encode = now
+            next_encode = max(next_encode + 1 / SEND_FPS, now - 1 / SEND_FPS)
             height, width = frame.shape[:2]
             if width > FRAME_WIDTH:
                 frame = cv2.resize(frame, (FRAME_WIDTH, round(height * FRAME_WIDTH / width)))

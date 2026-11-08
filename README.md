@@ -248,7 +248,7 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
                               session_verdict after each response, all answers combined
                               summary         on stop, ranked
                               status          ~1/s, per-component health
-                              frame           webcam JPEG, ~10/s
+                              frame           webcam JPEG, ~30/s
 ```
 
 ### Frontend → backend
@@ -294,7 +294,7 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 | `session_verdict` | After every `response`: all scored answers so far, re-combined. `likelihood`, `interval`, `band` as in a verdict, `log_lr` (sum over answers), `z` (Stouffer over the answers' scores), `answers` (how many added evidence), `counts` per band, and `history`: the session likelihood after each answer. |
 | `summary` | Sent on `stop`. Every question, highest spike first, with its `latency_s`, overall `suspicion` (see `confidence` in `response`), `likelihood` and `band`; `session` is the final `session_verdict`. |
 | `status` | ~1/sec and on connect. Each component is `ok`, `missing`, or `off`. `session` describes the running session (or `null`) so a reloaded dashboard can reattach: its questions carry `text`, `due` and `verdict`, and `session.verdict` is the latest `session_verdict`. |
-| `frame` | Webcam, ~10/sec, base64 JPEG ~480 px wide. `VERIFI_CAMERA=off` disables, `VERIFI_CAMERA=1` picks another camera. The Mac terminal needs camera permission. |
+| `frame` | Webcam, up to 30/sec (every camera frame), base64 JPEG ~480 px wide. `VERIFI_CAMERA=off` disables, `VERIFI_CAMERA=1` picks another camera. The Mac terminal needs camera permission. |
 
 ### Scoring (`backend/scoring.py`)
 
