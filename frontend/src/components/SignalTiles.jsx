@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { GROUPS, SIGNALS, alertState, thresholdsFor } from '../lib/signals'
+import { readSectionOpen, writeSectionOpen } from '../lib/useSectionOpen'
+import Icon from './Icon'
 import VoiceAnswers from './VoiceAnswers'
 
 function formatValue(signal, value) {
@@ -85,7 +87,10 @@ function Tile({ signal, latest, baseline, components, open, onToggle }) {
 // Signals in three dropdowns (body sensors, vision, voice). Each summary line says
 // how many of its signals are outside normal, so a closed dropdown still flags a reaction.
 export default function SignalTiles({ latest, baseline, components, openKeys, onToggle, session }) {
-  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(GROUPS.map((g) => [g.key, true])))
+  // Closed by default (the summary line still flags a reaction); remembered like the other dropdowns.
+  const [openGroups, setOpenGroups] = useState(() =>
+    Object.fromEntries(GROUPS.map((g) => [g.key, readSectionOpen(`signals-${g.key}`)])),
+  )
 
   return (
     <div className="signal-groups">
@@ -101,10 +106,12 @@ export default function SignalTiles({ latest, baseline, components, openKeys, on
             open={openGroups[group.key]}
             onToggle={(event) => {
               const open = event.currentTarget.open
+              writeSectionOpen(`signals-${group.key}`, open)
               setOpenGroups((groups) => (groups[group.key] === open ? groups : { ...groups, [group.key]: open }))
             }}
           >
             <summary>
+              <Icon name={group.key} />
               <span className="signal-group-title">{group.label}</span>
               {alerts > 0 ? (
                 <span className="tile-alert">

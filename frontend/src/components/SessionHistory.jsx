@@ -1,5 +1,25 @@
 import { viewLive, viewSession } from '../lib/store'
 import { formatDuration } from '../lib/format'
+import { BANDS, INSUFFICIENT, bandCounts } from '../lib/verdict'
+
+// "2 high · 1 low": how the session's answers read, most concerning first.
+function Counts({ questions }) {
+  const counts = bandCounts(questions)
+  const parts = [...BANDS, INSUFFICIENT].filter((b) => counts[b.key] > 0)
+  if (!parts.length) return null
+  return (
+    <span className="history-counts">
+      {parts.map((b) => (
+        <span key={b.key} className={`history-count band-${b.key}`}>
+          <span className="band-glyph" aria-hidden="true">
+            {b.glyph}
+          </span>
+          {counts[b.key]} {b.key === INSUFFICIENT.key ? 'no signal' : b.label.toLowerCase()}
+        </span>
+      ))}
+    </span>
+  )
+}
 
 function clockTime(t) {
   return new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -15,18 +35,16 @@ function Details({ session }) {
   return <span>{parts.join(' · ')}</span>
 }
 
+// The list only: the "Sessions" dropdown around it (App.jsx) carries the title.
 export default function SessionHistory({ sessions, viewId, activeId }) {
   if (sessions.length === 0) return null
   return (
-    <section className="card history" aria-label="Sessions">
-      <div className="card-head">
-        <h2 className="section-title">Sessions</h2>
-        {viewId !== null && activeId === null && (
-          <button className="button-link" type="button" onClick={viewLive}>
-            Back to live
-          </button>
-        )}
-      </div>
+    <div className="history">
+      {viewId !== null && activeId === null && (
+        <button className="button-link history-back" type="button" onClick={viewLive}>
+          ← Back to live
+        </button>
+      )}
       <ul>
         {[...sessions].reverse().map((session) => (
           <li key={session.id}>
@@ -41,10 +59,11 @@ export default function SessionHistory({ sessions, viewId, activeId }) {
                 {session.name} <small>{clockTime(session.startT)}</small>
               </span>
               <Details session={session} />
+              <Counts questions={session.questions} />
             </button>
           </li>
         ))}
       </ul>
-    </section>
+    </div>
   )
 }

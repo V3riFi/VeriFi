@@ -38,7 +38,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from backend import scoring
+from backend import confidence, scoring, verdict
 from backend.camera import SEND_FPS, Camera
 from backend.face import FaceTracker
 from backend.serial_io import SerialReader
@@ -63,6 +63,8 @@ VOICE_SENTENCES = [
 # measures the room's loudness; after it, voice only counts as the subject speaking
 # when it's this much louder. TUNE: raise it if background chatter still gets through.
 SPEECH_MARGIN_DB = 6.0
+# Warn when a voice is heard for at least this share of the silent baseline (it should be ~0).
+TALKING_IN_BASELINE = 0.3
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
@@ -74,6 +76,8 @@ ANSWER_S = 10.0
 ANSWER_KEYS = ["latency_s", "latency_marked", "duration_s", "speech_rate", "pauses", "pause_s",
                "pitch", "intonation", "hnr", "tension", "cut"]
 VOICE_RESULT_TIMEOUT_S = 5.0
+# While an answer's window is open, a provisional verdict on the partial window goes out this often.
+PROGRESS_EVERY_S = 0.3
 FACE_KEYS = ["blink_rate", "hand_on_face", "lip_compression"]
 SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "temp", "spo2", *FACE_KEYS, *VOICE_KEYS]
 
@@ -136,7 +140,9 @@ class FakeSignals:
             "hr": round(hr, 1),
             "flex": round(flex, 1),
             "breath_rate": 15,
-            "blink_rate": 17,
+            # Varies a little like a real blink rate: a perfectly flat signal would read as
+            # "exactly like baseline" and pull every verdict toward calm.
+            "blink_rate": round(17 + 2 * math.sin(elapsed / 11) + random.gauss(0, 0.8), 1),
         }
 
 
@@ -193,6 +199,10 @@ class Session:
         # "Done asking" click (None if not clicked); "due" is when the response is scored.
         self.questions: list[dict] = []
         self.tasks: set[asyncio.Task] = set()  # answers being analyzed
+        # Per-answer verdicts (backend/verdict.py): built once both baselines are done.
+        self.engine: verdict.Engine | None = None
+        self.engine_tried = False
+        self.session_verdict: dict | None = None  # every scored answer so far, combined
         self.log = SessionLog(subject, now)
         self.log.event(now, "baseline_start", label=subject)
         self.recording = voice.start_recording(self.log.path.with_suffix(".wav"))
@@ -216,10 +226,13 @@ class Session:
         return None if self.room_db is None else self.room_db + SPEECH_MARGIN_DB
 
     def ask(self, now: float, label: str, text: str | None, stimulus: str | None) -> dict:
-        self.questions.append({"label": label, "t": now, "end": None, "due": now + scoring.WINDOW_S,
-                               "spike": None, "signals": {}, "voice": None, "done": False})
+        due = now + scoring.WINDOW_S
+        self.questions.append({"label": label, "text": text or None, "t": now, "end": None,
+                               "due": due, "spike": None, "signals": {}, "voice": None,
+                               "confidence": None, "verdict": None, "progress_t": 0.0, "done": False})
         self.log.event(now, "question", label=label, text=text or "", stimulus=stimulus or "")
-        return {"type": "question", "t": round(now, 3), "label": label, "phase": "start"}
+        return {"type": "question", "t": round(now, 3), "label": label, "text": text or None,
+                "due": round(due, 3), "phase": "start"}
 
     def end_question(self, now: float) -> dict | None:
         """The interrogator finished asking. None if no question is waiting for it."""
@@ -230,7 +243,8 @@ class Session:
         q["end"] = now
         q["due"] = max(q["due"], now + ANSWER_S)  # give the answer its full window
         self.log.event(now, "question_end", label=q["label"])
-        return {"type": "question", "t": round(now, 3), "label": q["label"], "phase": "end"}
+        return {"type": "question", "t": round(now, 3), "label": q["label"], "due": round(q["due"], 3),
+                "phase": "end"}
 
     def score(self, q: dict, now: float) -> dict:
         """Physiology part of the response. The voice part is added by finish_answer()."""
@@ -238,10 +252,39 @@ class Session:
         hi = q["t"] + scoring.WINDOW_S
         window = [s for s in self.samples if lo <= s["t"] <= hi]
         q["spike"], q["signals"] = scoring.response(window, q["t"], self.baseline)
+        q["verdict"], raw = self.answer_verdict(q, now)
+        q["confidence"] = confidence.to_message(raw) if raw else None
         q["done"] = True
         self.log.event(now, "response", label=q["label"], spike=q["spike"])
         return {"type": "response", "t": round(now, 3), "label": q["label"], "spike": q["spike"],
-                "signals": q["signals"], "voice": None, "_question": q}
+                "signals": q["signals"], "voice": None, "confidence": q["confidence"],
+                "verdict": q["verdict"], "_question": q}
+
+    def verdict_engine(self) -> verdict.Engine | None:
+        """The baseline side of the verdicts, built once when both baselines are done."""
+        if not self.engine_tried and self.ready:
+            self.engine_tried = True
+            voice_range = (self.voice_start, self.voice_end) if self.voice_done else None
+            try:
+                self.engine = verdict.Engine(self.samples, (self.started, self.baseline_end), voice_range)
+            except Exception as e:  # noqa: BLE001 - verdicts then say "not enough signal"
+                print(f"verdict: couldn't analyze the baseline ({e!r})", flush=True)
+        return self.engine
+
+    def answer_verdict(self, q: dict, until: float, provisional: bool = False) -> tuple[dict | None, dict | None]:
+        """(verdict, confidence.py's raw result) for one answer, up to `until`. (None, None) if it
+        fails: the verdict is an extra, so it must never hold up the response."""
+        try:
+            return verdict.score(self.verdict_engine(), self.samples, q["t"], until, q["end"], provisional)
+        except Exception as e:  # noqa: BLE001
+            print(f"verdict: couldn't score {q['label']} ({e!r})", flush=True)
+            return None, None
+
+    def session_message(self, now: float) -> dict:
+        """Every scored answer so far combined, re-run after each answer."""
+        answers = [(q["label"], q["verdict"]) for q in self.questions if q["done"] and q["verdict"]]
+        self.session_verdict = verdict.session_summary(answers)
+        return {"type": "session_verdict", "t": round(now, 3), **self.session_verdict}
 
     def answer_request(self, q: dict, until: float):
         """Queues the voice analysis of this question's answer (a Future, or None without a mic)."""
@@ -284,6 +327,17 @@ class Session:
                 self.room_db = room[len(room) // 2]
                 print(f"voice: room level {self.room_db:.1f} dB, speech counts above "
                       f"{self.room_db + SPEECH_MARGIN_DB:.1f} dB", flush=True)
+                # Talking during the silent baseline makes the "room level" a voice level, and then
+                # the subject's own answers are too quiet to count as speech. Say so on screen.
+                heard = [s for s in silent if s.get("voice_db") is not None]
+                talking = sum(s.get("pitch") is not None for s in heard) / len(heard)
+                if talking >= TALKING_IN_BASELINE:
+                    print(f"voice: someone was talking for {talking:.0%} of the silent baseline", flush=True)
+                    events.append({"type": "error", "message": (
+                        f"The microphone heard talking during {talking:.0%} of the silent baseline, so it "
+                        f"set the room level to {self.room_db:.0f} dB and may not pick up the subject's "
+                        "answers. For voice to work, stop and start again, and keep the room quiet "
+                        "until the baseline is done.")})
             self.log.event(t, "baseline_done")
             events.append({"type": "baseline", "t": round(t, 3), "phase": "done", **self.baseline.as_message()})
             if VOICE_BASELINE_S > 0 and voice.status == "ok":
@@ -315,23 +369,44 @@ class Session:
                 tension = scoring.vocal_tension(sample, self.baseline)
                 sample["vocal_tension"] = None if tension is None else round(tension, 2)
 
+        self.verdict_engine()  # builds it the moment both baselines are done
+        scored = False
         for q in self.questions:
-            if not q["done"] and t >= q["due"]:
+            if q["done"]:
+                continue
+            if t >= q["due"]:
                 events.append(self.score(q, t))
+                scored = True
+            elif t - q["progress_t"] >= PROGRESS_EVERY_S:
+                # The live estimate on the partial window, so the dashboard's gauge moves.
+                q["progress_t"] = t
+                provisional, _ = self.answer_verdict(q, t, provisional=True)
+                if provisional:
+                    events.append({"type": "verdict_progress", "t": round(t, 3), "label": q["label"],
+                                   "elapsed": round(t - q["t"], 2), "due": round(q["due"], 3),
+                                   "verdict": provisional})
+        if scored:
+            events.append(self.session_message(t))
 
         self.log.sample(sample)
         return events
 
     def finish(self, now: float) -> list[dict]:
         """Scores unfinished questions with the data so far (stop)."""
-        return [self.score(q, now) for q in self.questions if not q["done"]] if self.baseline else []
+        if not self.baseline:
+            return []
+        events = [self.score(q, now) for q in self.questions if not q["done"]]
+        return events + [self.session_message(now)] if events else events
 
     def close(self, now: float) -> dict:
         """Ends the session: the ranked summary, the audio file closed, the CSV closed."""
         ranked = sorted(self.questions, key=lambda q: q["spike"] if q["spike"] is not None else -math.inf, reverse=True)
         summary = {"type": "summary", "questions": [
-            {"label": q["label"], "spike": q["spike"], "latency_s": (q["voice"] or {}).get("latency_s")}
-            for q in ranked]}
+            {"label": q["label"], "spike": q["spike"], "latency_s": (q["voice"] or {}).get("latency_s"),
+             "suspicion": (q["confidence"] or {}).get("suspicion"),
+             "likelihood": (q["verdict"] or {}).get("likelihood"), "band": (q["verdict"] or {}).get("band")}
+            for q in ranked],
+            "session": self.session_verdict}
         audio = voice.stop_recording() if self.recording else None
         if audio and audio[1] is not None:
             self.log.event(audio[1], "audio_start", label=audio[0].name, text=f"{audio[2]:.1f} s")
@@ -385,10 +460,13 @@ def status_message() -> dict:
             "baseline": session.baseline.as_message() if session.baseline else None,
             "voice_baseline": session.voice_message(),
             "questions": [
-                {"label": q["label"], "t": round(q["t"], 3), "end": None if q["end"] is None else round(q["end"], 3),
-                 "spike": q["spike"], "signals": q["signals"], "voice": q["voice"], "done": q["done"]}
+                {"label": q["label"], "text": q["text"], "t": round(q["t"], 3),
+                 "end": None if q["end"] is None else round(q["end"], 3), "due": round(q["due"], 3),
+                 "spike": q["spike"], "signals": q["signals"], "voice": q["voice"],
+                 "confidence": q["confidence"], "verdict": q["verdict"], "done": q["done"]}
                 for q in session.questions
             ],
+            "verdict": session.session_verdict,
         },
     }
 
@@ -587,7 +665,10 @@ async def handle(message: dict) -> str | None:
             return "No session running."
         ending, session = session, None
         for event in ending.finish(now):
-            await deliver(ending, event)
+            if "_question" in event or "_reading" in event:
+                await deliver(ending, event)
+            else:
+                await broadcast(event)
         if ending.tasks:  # answers still being analyzed
             await asyncio.wait(ending.tasks, timeout=VOICE_RESULT_TIMEOUT_S)
         await broadcast(ending.close(now))

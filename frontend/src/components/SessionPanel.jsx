@@ -1,15 +1,7 @@
 import { useEffect, useState } from 'react'
 import { IS_DEMO, askQuestion, dismissError, endQuestion, startSession, stopSession } from '../lib/store'
 import { formatDuration } from '../lib/format'
-
-function useNow() {
-  const [now, setNow] = useState(() => Date.now() / 1000)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now() / 1000), 500)
-    return () => clearInterval(timer)
-  }, [])
-  return now
-}
+import { useNow } from '../lib/useNow'
 
 function Countdown({ label, startT, endT, now }) {
   const left = endT - now

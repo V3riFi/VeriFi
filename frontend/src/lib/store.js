@@ -1,6 +1,7 @@
 import { connectSocket } from './socket'
 import { connectDemo } from '../demo/fakeBackend'
 import { SAMPLE_FIELDS } from './signals'
+import { toSessionVerdict, toVerdict } from './verdict'
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000/ws'
 // The online demo (`npm run build:demo`) simulates the backend in the browser.
@@ -49,6 +50,10 @@ let state = {
 
 const listeners = new Set()
 const frameListeners = new Set()
+// Live estimates while an answer's window is open ("verdict_progress", ~3/s). Kept out of React
+// state like the samples: only the components showing them subscribe (useSyncExternalStore).
+const progress = new Map() // `${session id}:${label}` -> { verdict, t, elapsed }
+const progressListeners = new Set()
 let socket = null
 let nextSessionId = 1
 let pendingName = null
@@ -87,6 +92,12 @@ export const store = {
     frameListeners.add(listener)
     return () => frameListeners.delete(listener)
   },
+  // The live estimate for one open answer, or null. Same object until the next estimate.
+  subscribeProgress(listener) {
+    progressListeners.add(listener)
+    return () => progressListeners.delete(listener)
+  },
+  getProgress: (sessionId, label) => progress.get(`${sessionId}:${label}`) ?? null,
 }
 
 /* ---------- samples ---------- */
@@ -141,20 +152,24 @@ function toVoice(remote) {
 }
 
 // A question as the dashboard keeps it. endT: when "Done asking" was clicked (null if not);
-// responded: its "response" arrived; voice: that response's per-answer voice features.
+// responded: its "response" arrived; voice: that response's per-answer voice features;
+// dueT: when the backend scores it; verdict: its deception likelihood (lib/verdict.js), null until scored.
 function toQuestion(remote, fallbackLabel) {
   return {
     label: String(remote.label ?? fallbackLabel),
+    text: typeof remote.text === 'string' && remote.text ? remote.text : null,
     t: remote.t,
     endT: Number.isFinite(remote.end) ? remote.end : null,
+    dueT: Number.isFinite(remote.due) ? remote.due : Number.isFinite(remote.t) ? remote.t + 10 : null,
     spike: toNumber(remote.spike),
     signals: remote.signals ?? {},
     voice: remote.voice ?? null,
+    verdict: toVerdict(remote.verdict),
     responded: Boolean(remote.done),
   }
 }
 
-function beginSession({ name, startT, baselineEndT, baseline = null, voice = null, questions = [] }) {
+function beginSession({ name, startT, baselineEndT, baseline = null, voice = null, questions = [], verdict = null }) {
   if (state.activeId !== null) endSession()
   clearTimeout(startTimer)
   const id = nextSessionId++
@@ -167,6 +182,7 @@ function beginSession({ name, startT, baselineEndT, baseline = null, voice = nul
     baseline,
     voice,
     questions,
+    verdict, // every answer so far, combined ("session_verdict")
     summary: null,
     endT: null,
     peakStress: null,
@@ -235,7 +251,8 @@ function onQuestion(message) {
   if (message.phase === 'end') {
     const index = active.questions.findLastIndex((q) => q.label === message.label)
     if (index === -1) return
-    const questions = active.questions.map((q, i) => (i === index ? { ...q, endT: message.t } : q))
+    const dueT = Number.isFinite(message.due) ? message.due : null
+    const questions = active.questions.map((q, i) => (i === index ? { ...q, endT: message.t, dueT: dueT ?? q.dueT } : q))
     return updateSession(active.id, { questions })
   }
   const question = toQuestion({ ...message, done: false }, `Q${active.questions.length + 1}`)
@@ -249,10 +266,33 @@ function onResponse(message) {
   if (index === -1) return
   const questions = active.questions.map((q, i) =>
     i === index
-      ? { ...q, spike: toNumber(message.spike), signals: message.signals ?? {}, voice: message.voice ?? null, responded: true }
+      ? {
+          ...q,
+          spike: toNumber(message.spike),
+          signals: message.signals ?? {},
+          voice: message.voice ?? null,
+          verdict: toVerdict(message.verdict),
+          responded: true,
+        }
       : q,
   )
   updateSession(active.id, { questions })
+  // The final verdict replaces the live estimate.
+  if (progress.delete(`${active.id}:${message.label}`)) progressListeners.forEach((listener) => listener())
+}
+
+// A provisional verdict on the partial window. Doesn't touch React state.
+function onVerdictProgress(message) {
+  const active = activeSession()
+  const verdict = toVerdict(message.verdict)
+  if (!active || !verdict || !active.questions.some((q) => q.label === message.label && !q.responded)) return
+  progress.set(`${active.id}:${message.label}`, { verdict, t: message.t, elapsed: toNumber(message.elapsed) })
+  progressListeners.forEach((listener) => listener())
+}
+
+function onSessionVerdict(message) {
+  const active = activeSession() ?? state.sessions[state.sessions.length - 1]
+  if (active) updateSession(active.id, { verdict: toSessionVerdict(message) })
 }
 
 function onSummary(message) {
@@ -278,6 +318,7 @@ function onStatus(message) {
       baseline: toBaseline(remote.baseline),
       voice: toVoice(remote.voice_baseline),
       questions: Array.isArray(remote.questions) ? remote.questions.map((q, i) => toQuestion(q, `Q${i + 1}`)) : [],
+      verdict: toSessionVerdict(remote.verdict),
     })
   } else if (!remote && active && !state.starting) {
     endSession() // the backend no longer has it (stopped elsewhere, or restarted)
@@ -301,6 +342,10 @@ function handleSocketMessage(message) {
       return onQuestion(message)
     case 'response':
       return onResponse(message)
+    case 'verdict_progress':
+      return onVerdictProgress(message)
+    case 'session_verdict':
+      return onSessionVerdict(message)
     case 'summary':
       return onSummary(message)
     case 'error':
