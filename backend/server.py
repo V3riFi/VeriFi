@@ -40,6 +40,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend import confidence, scoring, verdict
 from backend.camera import Camera
+from backend.clients import Client
 from backend.face import FaceTracker
 from backend.serial_io import SerialReader
 from voice.live import VoiceTracker
@@ -82,7 +83,7 @@ PROGRESS_EVERY_S = 0.3
 FACE_KEYS = ["blink_rate", "hand_on_face", "lip_compression"]
 SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "temp", "spo2", *FACE_KEYS, *VOICE_KEYS]
 
-clients: set[WebSocket] = set()
+clients: set[Client] = set()
 
 
 # ----------------------------- Fake signals --------------------------------
@@ -476,12 +477,10 @@ def status_message() -> dict:
 
 
 async def broadcast(message: dict) -> None:
+    """Queues the message for every open tab. Never waits for a browser (see backend/clients.py)."""
     text = json.dumps(message)
-    for ws in list(clients):
-        try:
-            await ws.send_text(text)
-        except Exception:
-            clients.discard(ws)
+    for client in list(clients):
+        client.send(text, frame=message.get("type") == "frame")
 
 
 breath_history: deque[tuple[float, float]] = deque()  # (t, flex) for breathing rate
@@ -684,24 +683,26 @@ async def handle(message: dict) -> str | None:
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
-    clients.add(ws)
-    await ws.send_text(json.dumps(status_message()))
+    client = Client(ws, clients.discard)
+    clients.add(client)
+    client.send(json.dumps(status_message()))
     try:
         while True:
             text = await ws.receive_text()
             try:
                 message = json.loads(text)
             except json.JSONDecodeError:
-                await ws.send_text(json.dumps({"type": "error", "message": "Message wasn't valid JSON."}))
+                client.send(json.dumps({"type": "error", "message": "Message wasn't valid JSON."}))
                 continue
             if not isinstance(message, dict):
-                await ws.send_text(json.dumps({"type": "error", "message": "Message must be a JSON object."}))
+                client.send(json.dumps({"type": "error", "message": "Message must be a JSON object."}))
                 continue
             print("from frontend:", message, flush=True)
             error = await handle(message)
             if error:
-                await ws.send_text(json.dumps({"type": "error", "message": error}))
+                client.send(json.dumps({"type": "error", "message": error}))
     except WebSocketDisconnect:
         pass
     finally:
-        clients.discard(ws)
+        clients.discard(client)
+        client.stop()

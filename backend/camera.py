@@ -82,6 +82,7 @@ class Camera:
 
         capture = self._capture
         next_encode = 0.0
+        lost = False  # so a camera that stays gone is reported once, not every 5 s
         while not self._stop.is_set():
             if capture is None:
                 self.status = "missing"
@@ -91,9 +92,15 @@ class Camera:
 
             ok, frame = capture.read()  # blocks at the camera's own frame rate
             if not ok:
+                if not lost:
+                    print(f"camera: lost the video from camera {self.index}, retrying every {REOPEN_EVERY_S:g} s", flush=True)
+                    lost = True
                 capture.release()
                 capture = None
                 continue
+            if lost:
+                print(f"camera: video from camera {self.index} is back", flush=True)
+                lost = False
             self.status = "ok"
 
             now = time.time()

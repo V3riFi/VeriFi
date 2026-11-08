@@ -43,6 +43,7 @@ int   ecgStartup = ECG_SETTLE_SAMPLES + ECG_LEARN_SAMPLES;
 float signalLevel = 0.0;                      // typical energy of a beat
 float noiseLevel  = 0.0;                      // typical energy between beats
 const float THRESHOLD_FRACTION = 0.3f;
+const float MIN_BEAT_TO_NOISE  = 4.0f;       // weaker than this is noise, not a beat
 
 // The shortest possible gap between beats (200 BPM). Long enough to skip the T wave.
 const unsigned long PEAK_COOLDOWN_US = 300000UL;
@@ -59,7 +60,14 @@ unsigned long lastPeakUs  = 0;
 const int   ECG_RAIL_LOW  = 15;               // pinned at a rail = electrode off
 const int   ECG_RAIL_HIGH = 1008;
 const unsigned long NO_PEAK_TIMEOUT_US = 3000000UL;
-unsigned long lastValidEcgUs = 0;
+// Disconnected electrodes make the amplifier swing between both rails.
+const int   ECG_QUALITY_SAMPLES = 125;        // judged once a second
+const int   ECG_MAX_RAILED      = 18;         // about 15%; a strong beat can touch a rail briefly
+int   ecgQualityCount = 0;
+int   ecgRailedCount  = 0;
+bool  ecgSignalClean  = false;
+// Real beats are evenly spaced; noise isn't. Allowed spread, as a fraction of the median.
+const float MAX_INTERVAL_SPREAD = 0.25f;
 
 // --- BPM ---
 #define BPM_BUFFER_SIZE 5
@@ -171,7 +179,7 @@ bool detectBeat(float filtered, unsigned long now, unsigned long &beatUs) {
   float capped = (beatEnergy < 4.0f * signalLevel) ? beatEnergy : 4.0f * signalLevel;
   signalLevel += 0.125f * (capped - signalLevel);
   beatUs = beatPeakUs;
-  return true;
+  return beatEnergy > MIN_BEAT_TO_NOISE * noiseLevel;
 }
 
 void setup() {
@@ -197,11 +205,16 @@ void loop() {
     // ECG beat detection
     int ecg = analogRead(ECG_PIN);
     bool ecgConnected = (ecg > ECG_RAIL_LOW && ecg < ECG_RAIL_HIGH);
-    if (ecgConnected) lastValidEcgUs = now;
+    if (!ecgConnected) ecgRailedCount++;
+    if (++ecgQualityCount >= ECG_QUALITY_SAMPLES) {
+      ecgSignalClean = (ecgRailedCount <= ECG_MAX_RAILED);
+      ecgQualityCount = 0;
+      ecgRailedCount = 0;
+    }
 
     float ecgFiltered = runBiquad(ecgLowPass, runBiquad(ecgHighPass, (float)ecg - 512.0f));
     unsigned long beatUs = 0;
-    bool peak = detectBeat(ecgFiltered, now, beatUs) && ecgConnected;
+    bool peak = detectBeat(ecgFiltered, now, beatUs) && ecgConnected && ecgSignalClean;
 
     digitalWrite(LED_PIN, peak ? HIGH : LOW);
 
@@ -224,7 +237,13 @@ void loop() {
               sorted[j + 1] = key;
             }
             uint32_t med = sorted[intervalCount / 2];
-            if (med > 0) {
+            uint32_t spread = sorted[(intervalCount * 3) / 4] - sorted[intervalCount / 4];
+            if (med > 0 && (float)spread > MAX_INTERVAL_SPREAD * (float)med) {
+              // Too irregular to be a heartbeat: report nothing rather than a guess.
+              targetHR = 0;
+              displayedHR = 0.0;
+              bpmSmooth = 0.0;
+            } else if (med > 0) {
               uint32_t rawBpm = 60000000UL / med;
               if (rawBpm >= 40 && rawBpm <= 180) {
                 if (bpmSmooth == 0.0) bpmSmooth = (float)rawBpm;
@@ -256,9 +275,8 @@ void loop() {
     int gsr = analogRead(GSR_PIN);
 
     // ECG validity check
-    bool ecgInBand  = (now - lastValidEcgUs < 1000000UL);
     bool recentPeak = (lastPeakUs > 0) && (now - lastPeakUs < NO_PEAK_TIMEOUT_US);
-    bool signalValid = ecgInBand && recentPeak;
+    bool signalValid = ecgSignalClean && recentPeak;
 
     if (!signalValid) {
       targetHR = 0;
@@ -283,8 +301,9 @@ void loop() {
     // Breathing: fast minus slow = real signal above noise floor
     float breathSignal = emgEnvelope - emgEnvelopeSlow;
     if (breathSignal < 0) breathSignal = 0;
-    int breath = (int)(breathSignal * 100);
-    if (breath > 2000) breath = 2000;
+    // Limit it while it's still a float: an int on the Uno overflows past 32767.
+    float breathScaled = breathSignal * 100.0f;
+    int breath = (breathScaled > 2000.0f) ? 2000 : (int)breathScaled;
 
     Serial.print("breath: ");      Serial.print(breath);
     Serial.print(", gsr: ");       Serial.print(gsr);
