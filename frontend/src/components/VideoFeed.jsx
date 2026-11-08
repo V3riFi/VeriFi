@@ -17,7 +17,7 @@ export default function VideoFeed({ connection, cameraStatus }) {
   const [hasVideo, setHasVideo] = useState(false)
 
   useEffect(() => {
-    // Frames bypass React state: setting src directly avoids 10 re-renders a second.
+    // Frames bypass React state: setting src directly avoids 30 re-renders a second.
     const unsubscribe = store.onFrame((frame) => {
       imageRef.current.src = `data:image/jpeg;base64,${frame.jpeg}`
       lastFrameAt.current = Date.now()

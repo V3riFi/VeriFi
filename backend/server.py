@@ -39,7 +39,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend import confidence, scoring, verdict
-from backend.camera import SEND_FPS, Camera
+from backend.camera import Camera
 from backend.face import FaceTracker
 from backend.serial_io import SerialReader
 from voice.live import VoiceTracker
@@ -47,6 +47,7 @@ from voice.live import VoiceTracker
 FAKE = os.environ.get("VERIFI_FAKE", "") not in ("", "0")
 SAMPLE_HZ = 20  # fake signals only; the Arduino sends at its own rate (10 Hz)
 STATUS_EVERY_S = 1.0
+FRAME_POLL_S = 0.005  # how often frame_loop checks for a new webcam frame
 SENSOR_STALE_S = 5.0  # a sensor with no value for this long shows as missing
 BASELINE_S = float(os.environ.get("VERIFI_BASELINE_S", "60"))
 VOICE_BASELINE_S = float(os.environ.get("VERIFI_VOICE_BASELINE_S", "25"))
@@ -568,7 +569,9 @@ async def status_loop() -> None:
 async def frame_loop() -> None:
     last_sent = 0.0
     while True:
-        await asyncio.sleep(1 / SEND_FPS)
+        # Check far more often than frames arrive, so each one goes out as soon as it's
+        # encoded. Polling at SEND_FPS drifts against the camera's clock and drops frames.
+        await asyncio.sleep(FRAME_POLL_S)
         frame = camera.latest()
         if clients and frame and frame[0] > last_sent:
             last_sent = frame[0]
