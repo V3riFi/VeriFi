@@ -1,5 +1,7 @@
 # VeriFi
 
+<p align="center"><img src="docs/banner.webp" alt="VeriFi logo: a figure drawn in ASCII characters inside a wide eye shape" width="720"></p>
+
 **natHacks 2026 · Security & Defense track**
 
 A multimodal **suspicion detector** for interrogations. The interrogator asks questions and can show objects or crime-scene images; the suspect answers normally. VeriFi watches the subject's body and shows a live stress indicator plus which signals spiked after each question, compared against that person's own calm baseline.
