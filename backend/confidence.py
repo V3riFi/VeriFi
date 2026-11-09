@@ -38,8 +38,8 @@ Data comes in the same shapes the rest of the backend uses:
 
 Baselines follow scoring.Baseline: physiology and face from the silent baseline; voice signals
 from the voice baseline (reading aloud), voiced samples only; the same MIN_STD floors. Breathing
-is chest movement: the flex belt's range over HOLD_RANGE_S, scoring.py's breath-hold measure
-(shallower breathing = smaller range). It uses the voice baseline when there is one, because
+is the gap between inhales: each sample gets the length of the inhale-to-inhale gap it falls in
+(a held breath = a longer gap), from the same inhale events as scoring.py's breath hold. It uses the voice baseline when there is one, because
 answering out loud changes breathing (the reason scoring.py keeps breath_rate out of stress), so
 it is compared with breathing while reading aloud, not while silent.
 
@@ -225,7 +225,8 @@ def evaluate(baselines: dict, categories: dict) -> dict:
 # "voiced": only samples where the subject is speaking (pitch present) count.
 # "direction": +1 a rise is suspicious, -1 a drop is, 0 (default) either way.
 # "phasic": (from, to) seconds after the question: peak there minus the PRE_S before (see top).
-# "chest_range" is derived, not a column: the flex belt's range over scoring.HOLD_RANGE_S.
+# "breath_gap" is derived, not a column: the inhale-to-inhale gap each sample falls in (seconds).
+# "min_std": this signal's baseline sigma floor, when it isn't in MIN_STD.
 
 def _voice(key: str, name: str, weight: float, direction: int = 0) -> dict:
     return {"key": key, "name": name, "weight": weight, "phase": "voice", "voiced": True, "direction": direction}
@@ -244,8 +245,9 @@ CATEGORIES = {
         {"key": "gsr", "name": "Skin conductance", "weight": 1.0, "direction": +1, "phasic": (1.0, 5.0)},
     ]},
     "Breathing": {"weight": 0.20, "sensors": [
-        # Respiration suppression: shallower breathing = less chest movement.
-        {"key": "chest_range", "name": "Chest movement", "weight": 1.0, "phase": "voice", "direction": -1},
+        # Respiration suppression: breath held = a longer gap until the next inhale.
+        {"key": "breath_gap", "name": "Breath gap", "weight": 1.0, "phase": "voice", "direction": +1,
+         "min_std": 0.5},
     ]},
     "Cardiac": {"weight": 0.15, "sensors": [
         # spo2 and temp are left out, as in stress: they barely move, or drift over a session.
@@ -291,17 +293,33 @@ def _values(samples: list[dict], key: str, voiced: bool,
             start: float = -math.inf, end: float = math.inf) -> np.ndarray:
     """One signal's values with start <= t <= end, NaNs dropped.
 
-    scoring.column rules: None/negative/hr=0 are missing. "chest_range" is computed from flex over
-    all of samples first, so pass samples starting HOLD_RANGE_S before start to fill its window.
+    scoring.column rules: None/negative/hr=0 are missing. "breath_gap" is computed from the inhales
+    in all of samples first, so pass samples from scoring.BREATH_LOOKBACK_S before start to find
+    the inhale that opened the first gap.
     """
     if voiced:
         samples = [s for s in samples if s.get("pitch") is not None]
     t = scoring.column(samples, "t")
-    if key == "chest_range":
-        x = scoring.rolling_range(t, scoring.column(samples, "flex"), scoring.HOLD_RANGE_S)
+    if key == "breath_gap":
+        x = _breath_gaps(t, scoring.column(samples, "flex"))
     else:
         x = scoring.column(samples, key)
     return x[(t >= start) & (t <= end) & ~np.isnan(x)]
+
+
+def _breath_gaps(t: np.ndarray, flex: np.ndarray) -> np.ndarray:
+    """For each sample, the length of the inhale-to-inhale gap it falls in. The gap still open
+    at the end is measured to the last sample; samples before the first inhale are NaN."""
+    out = np.full(len(t), np.nan)
+    have = ~np.isnan(flex)
+    inhales = scoring.inhale_times(t, flex)
+    if not len(inhales) or not have.any():
+        return out
+    edges = np.append(inhales, t[have][-1])
+    which = np.searchsorted(inhales, t, side="right") - 1  # index of the inhale that opened the gap
+    ok = which >= 0
+    out[ok] = edges[which[ok] + 1] - edges[which[ok]]
+    return out
 
 
 def _between(samples: list[dict], start: float, end: float) -> list[dict]:
@@ -330,7 +348,7 @@ def baselines_from_samples(silent: list[dict], voice: list[dict] | None = None,
                 skipped.append((cat_name, s["name"], f"baseline has {len(x)} values (needs {need})"))
                 continue
             st = stats_from_data(x)
-            st["sigma"] = max(st["sigma"], MIN_STD.get(s["key"], 0.0))
+            st["sigma"] = max(st["sigma"], s.get("min_std", MIN_STD.get(s["key"], 0.0)))
             sensors.append({"name": s["name"], "key": s["key"], **st, "n": len(x)})
         out[cat_name] = {"sensors": sensors}
     return out, skipped
@@ -389,7 +407,7 @@ def score_question(samples: list[dict], baselines: dict, q_t: float, until: floa
     "mean" signals are compared with the session baseline. "phasic" ones with the seconds just
     before the question, using the session baseline's sigma (as scoring.response does).
     """
-    lookback = max(scoring.PRE_S, scoring.HOLD_RANGE_S)
+    lookback = max(scoring.PRE_S, scoring.BREATH_LOOKBACK_S)
     nearby = _between(samples, q_t - lookback, until)
     current, skipped = readings_from_samples(nearby, baselines, q_t, until, q_end, categories)
     lookup_base = {}

@@ -16,24 +16,32 @@ VOICE = (40.0, 60.0)          # reading aloud (only in the voice tests)
 Q_T = 70.0                    # the question
 
 
-def make_session(seconds=90.0, seed=1, gsr=None, hr=None, flex_amp=None, talking=None, drop=None,
+def make_session(seconds=90.0, seed=1, gsr=None, hr=None, breath_gap=None, talking=None, drop=None,
                  only=None):
-    """Samples at HZ. gsr/hr/flex_amp/talking: functions of t that change the calm signal.
+    """Samples at HZ. gsr/hr/talking: functions of t that change the calm signal.
+
+    Breathing is inhale pulses, as the firmware sends them (flex 1 where an inhale starts, else
+    0). breath_gap: function of t giving the seconds until the next inhale (default 4 s).
 
     drop: (start, end) with no samples. only: keep just these fields (plus t).
     """
     rng = np.random.default_rng(seed)
     samples = []
+    next_inhale = 1.0
     for i in range(int(seconds * HZ)):
         t = i / HZ
         if drop and drop[0] <= t < drop[1]:
             continue
-        amp = flex_amp(t) if flex_amp else 25.0
+        inhale = t >= next_inhale - 1e-9
+        if inhale:
+            next_inhale = t + (breath_gap(t) if breath_gap else 4.0)
         s = {
             "t": t,
             "gsr": 450 + rng.normal(0, 1.5) + (gsr(t) if gsr else 0.0),
             "hr": 72 + 3 * math.sin(t / 7) + rng.normal(0, 0.5) + (hr(t) if hr else 0.0),
-            "flex": 330 + amp * math.sin(2 * math.pi * 0.25 * t) + rng.normal(0, 1),
+            # The "+ 0 * rng" keeps the old breathing noise draw, so every other signal gets the
+            # same random noise the tests were tuned with.
+            "flex": float(inhale) + 0 * rng.normal(0, 1),
             "blink_rate": 17 + rng.normal(0, 1.5),
             "lip_compression": 0.05 + rng.normal(0, 0.01),
             "hand_on_face": False,
@@ -104,17 +112,26 @@ class Reactions(unittest.TestCase):
         self.assertAlmostEqual(peak["to"], 11.0, places=1)
 
     def test_breathing_is_scored_while_talking(self):
-        # Talking makes breathing shallower. The answer is compared with breathing while reading
-        # aloud (the voice baseline), so it is scored, and talking alone doesn't look suppressed.
+        # Talking slows breathing (longer gaps between inhales). The answer is compared with
+        # breathing while reading aloud (the voice baseline), so it is scored, and talking alone
+        # doesn't look like a held breath.
         talking = lambda t: VOICE[0] <= t <= VOICE[1] or t >= Q_T + 1  # noqa: E731
-        shallow = lambda t: 12.0 if talking(t) else 25.0  # noqa: E731
-        samples = make_session(flex_amp=shallow, talking=talking)
+        slower = lambda t: 5.0 if talking(t) else 4.0  # noqa: E731
+        samples = make_session(breath_gap=slower, talking=talking)
         v, raw, engine = score(samples, voice=VOICE)
         breathing = category(v, "Breathing")
         self.assertIsNotNone(breathing["z"], "breathing must not be skipped while the subject talks")
         self.assertLess(breathing["suspicion"], 0.8)
         self.assertNotIn("Breathing", [c for c, _, _ in raw["skipped"]])
         self.assertIsNotNone(category(v, "Voice")["z"])
+
+    def test_breath_hold_after_question_is_suspicious(self):
+        # A ~9 s gap between inhales starting at the question, against a normal 4 s.
+        hold = lambda t: 9.0 if Q_T - 1 <= t < Q_T + 3 else 4.0  # noqa: E731
+        held, _, _ = score(make_session(breath_gap=hold))
+        calm, _, _ = score(make_session())
+        self.assertGreater(category(held, "Breathing")["z"], 1.0)
+        self.assertLess(abs(category(calm, "Breathing")["z"]), 1.0)
 
     def test_contributions_add_up_to_z(self):
         v, _, _ = score(make_session(gsr=rise(Q_T + 2, 15)))

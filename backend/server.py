@@ -98,7 +98,7 @@ class FakeSignals:
         self.gsr_rises: list[tuple[float, float]] = []  # (start time, total rise)
         self.hr_bump_until = 0.0
         self.hold: tuple[float, float] | None = None  # (start, end) of a breath hold
-        self.hold_flex = 330.0
+        self.next_inhale = time.time() + 1.0
 
     def react(self, now: float) -> None:
         """Called when a question is asked. About half the questions get a reaction."""
@@ -109,7 +109,7 @@ class FakeSignals:
         self.hr_bump_until = now + 8
         if random.random() < 0.5:
             start = now + random.uniform(0.5, 2.0)
-            self.hold = (start, start + random.uniform(2.5, 4.0))
+            self.hold = (start, start + random.uniform(5.0, 7.0))  # gap of ~9-11 s instead of ~4
 
     def sample(self) -> dict:
         now = time.time()
@@ -128,20 +128,20 @@ class FakeSignals:
         if now < self.hr_bump_until:
             hr += 8
 
-        flex = 330 + 25 * math.sin(2 * math.pi * 0.25 * elapsed)  # 15 breaths/min
-        if self.hold and self.hold[0] <= now < self.hold[1]:
-            flex = self.hold_flex  # chest stops moving
-        else:
-            self.hold_flex = flex
-        flex += random.gauss(0, 1)
+        # Breathing like the BioAmp sketch: 1 on the sample where an inhale starts, else 0.
+        # About 15 breaths/min; a breath hold delays the next inhale until it ends.
+        flex = 0
+        holding = self.hold is not None and self.hold[0] <= now < self.hold[1]
+        if now >= self.next_inhale and not holding:
+            flex = 1
+            self.next_inhale = now + random.uniform(3.5, 4.5)
 
         return {
             "type": "sample",
             "t": round(now, 3),
             "gsr": round(self.gsr, 1),
             "hr": round(hr, 1),
-            "flex": round(flex, 1),
-            "breath_rate": 15,
+            "flex": flex,  # breath_rate is worked out from these pulses in handle_sample
             # Varies a little like a real blink rate: a perfectly flat signal would read as
             # "exactly like baseline" and pull every verdict toward calm.
             "blink_rate": round(17 + 2 * math.sin(elapsed / 11) + random.gauss(0, 0.8), 1),
@@ -250,7 +250,7 @@ class Session:
 
     def score(self, q: dict, now: float) -> dict:
         """Physiology part of the response. The voice part is added by finish_answer()."""
-        lo = q["t"] - scoring.PRE_S - scoring.HOLD_RANGE_S
+        lo = q["t"] - max(scoring.PRE_S, scoring.BREATH_LOOKBACK_S)  # breathing: the gap open at Ask
         hi = q["t"] + scoring.WINDOW_S
         window = [s for s in self.samples if lo <= s["t"] <= hi]
         q["spike"], q["signals"] = scoring.response(window, q["t"], self.baseline)
