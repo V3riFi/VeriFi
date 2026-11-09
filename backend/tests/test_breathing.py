@@ -75,14 +75,17 @@ class BreathHold(unittest.TestCase):
         return scoring.longest_hold(t, flex, t >= 40, self.baseline)
 
     def test_baseline_learns_the_typical_gap(self):
-        self.assertAlmostEqual(self.baseline.breath_interval, 4.0, places=1)
+        self.assertAlmostEqual(self.baseline.breath_gap, 4.0, places=1)
 
     def test_one_missed_event_is_not_a_hold(self):
         history = [(t, 0 if 44 <= t < 46 else flex) for t, flex in pulses(50)]
-        self.assertLessEqual(self.hold_in(history), scoring.HOLD_TOLERANCE * self.baseline.breath_interval)
+        self.assertLessEqual(self.hold_in(history), scoring.HOLD_TOLERANCE * self.baseline.breath_gap)
+
+    def test_a_gap_already_open_when_the_window_starts_counts(self):
+        self.assertGreater(self.hold_in(pulses(50, hold=(30, 44))), 12)
 
     def test_normal_breathing_is_not_a_hold(self):
-        self.assertLessEqual(self.hold_in(pulses(50)), scoring.HOLD_TOLERANCE * self.baseline.breath_interval)
+        self.assertLessEqual(self.hold_in(pulses(50)), scoring.HOLD_TOLERANCE * self.baseline.breath_gap)
 
     def test_a_long_gap_is_a_hold(self):
         self.assertGreater(self.hold_in(pulses(50, hold=(40, 49))), 8)

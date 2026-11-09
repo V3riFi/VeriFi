@@ -59,6 +59,12 @@ MIN_BREATH_WINDOW_S = 15.0  # need this much history before reporting a breathin
 # Breath hold: the longest gap between events in the answer window. Up to HOLD_TOLERANCE
 # typical gaps is normal (so one missed event isn't a hold); each second beyond counts as 1 SD in spike.
 HOLD_TOLERANCE = 2.0
+BREATH_LOOKBACK_S = 15.0  # history kept before a question, to find the event that opened its gap
+
+
+def inhale_times(t: np.ndarray, flex: np.ndarray) -> np.ndarray:
+    """Times of the samples with a breath event (flex is 1)."""
+    return t[flex == 1]
 
 
 def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | None:
@@ -104,8 +110,9 @@ class Baseline:
         self.std: dict[str, float] = {}
         self.add(samples, keys)
         t = column(samples, "t")
-        breaths = t[column(samples, "flex") == 1]
-        self.breath_interval = float(np.median(np.diff(breaths))) if len(breaths) >= 2 else None
+        gaps = np.diff(inhale_times(t, column(samples, "flex")))
+        # This person's normal time between breath events.
+        self.breath_gap = float(np.median(gaps)) if len(gaps) else None
 
     def add(self, samples: list[dict], keys: tuple[str, ...], min_count: int = 2) -> int:
         """Adds (or replaces) these signals' mean and std from samples. Returns the fewest values any key had."""
@@ -170,12 +177,23 @@ def stress(recent: list[dict], baseline: Baseline) -> float | None:
 
 
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:
-    """Longest stretch (seconds) inside the window with no breath event."""
-    if baseline.breath_interval is None or np.isnan(flex[in_window]).all():
+    """Longest gap between breath events (seconds) that overlaps the window.
+
+    A gap still open at either end of the data is measured to the first / last sample, so
+    pass samples from BREATH_LOOKBACK_S before the window. None without breathing data in
+    the window, or without a normal gap (baseline.breath_gap) to compare it with.
+    """
+    have = ~np.isnan(flex)
+    if baseline.breath_gap is None or not (have & in_window).any():
         return None
-    times = t[in_window]
-    marks = [times[0], *times[flex[in_window] == 1], times[-1]]
-    return float(max(np.diff(marks)))
+    w0, w1 = t[in_window].min(), t[in_window].max()
+    th = t[have]
+    edges = np.concatenate([[th[0]], inhale_times(t, flex), [th[-1]]])
+    longest = 0.0
+    for a, b in zip(edges[:-1], edges[1:]):
+        if a < w1 and b > w0:
+            longest = max(longest, float(b - a))
+    return longest
 
 
 def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float | None, dict]:
@@ -207,6 +225,6 @@ def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float
 
     parts = {"hr": signals["hr"]} if "hr" in signals else {}
     if hold is not None:
-        parts["breath_hold"] = max(0.0, hold - HOLD_TOLERANCE * baseline.breath_interval)
+        parts["breath_hold"] = max(0.0, hold - HOLD_TOLERANCE * baseline.breath_gap)
     spike = _weighted(parts, SPIKE_WEIGHTS)
     return (round(spike, 2) if spike is not None else None), signals

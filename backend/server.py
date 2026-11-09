@@ -255,7 +255,7 @@ class Session:
 
     def score(self, q: dict, now: float) -> dict:
         """Physiology part of the response. The voice part is added by finish_answer()."""
-        lo = q["t"] - scoring.PRE_S
+        lo = q["t"] - max(scoring.PRE_S, scoring.BREATH_LOOKBACK_S)  # breathing: the gap open at Ask
         hi = q["t"] + scoring.WINDOW_S
         window = [s for s in self.samples if lo <= s["t"] <= hi]
         q["spike"], q["signals"] = scoring.response(window, q["t"], self.baseline)
