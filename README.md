@@ -50,7 +50,7 @@ Weights follow how strong the published evidence is for each cue. Face cues get 
 
 1. **Against this person, not a population.** Every signal is compared with how *this* subject behaved during their own baseline. Voice and breathing are compared with the read-aloud baseline, because talking changes both.
 2. **Calibrated so calm reads as calm.** VeriFi scores many "pseudo-questions" across the calm baseline to learn what a nothing-happened answer looks like for this person, and measures each real answer against that. Heart rate is compared with the seconds just before each question, so slow drift over a session isn't mistaken for a reaction.
-3. **Combined into a likelihood.** The signal groups are combined (weighted Stouffer) into one score, then into a deception likelihood with an 80% range: Low (<30%), Unclear, Elevated (≥60%), High (≥85%).
+3. **Combined into a likelihood.** The signal groups are combined (weighted Stouffer) into one score, then into a deception likelihood with an 80% range: Low (<30%), Unclear, Elevated (≥60%), High (≥85%). If that combined score is more than 2 standard deviations above the baseline mean, the answer also gets a **False** tag.
 4. **Quality gates.** If sensors dropped out during the answer, or fewer than two signal groups are usable, the answer shows **Not enough signal** with the reason.
 
 The math, constants and message formats are in [docs/TECHNICAL.md](docs/TECHNICAL.md).

@@ -1039,6 +1039,28 @@ input:focus-visible {
   letter-spacing: -0.1em;
 }
 
+.verdict-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.false-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--alert-text);
+  background: var(--alert-wash);
+  border: 1px solid var(--alert);
+}
+
 .band-live {
   margin-left: 2px;
   font-size: 0.68rem;

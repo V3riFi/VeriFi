@@ -162,7 +162,7 @@ function response(samples, qT, baseline) {
 // signal's p (one-sided when directional, two-sided otherwise), as in confidence.py.
 
 const CATEGORIES = [
-  { name: 'Breathing', weight: 0.2, sensors: [{ key: 'chest_range', name: 'Chest movement', direction: -1 }] },
+  { name: 'Breathing', weight: 0.2, sensors: [{ key: 'chest_range', name: 'Chest movement', direction: 0 }] },
   { name: 'Cardiac', weight: 0.15, sensors: [{ key: 'hr', name: 'Heart rate', direction: 0 }] },
   { name: 'Voice', weight: 0.13, sensors: [], missing: 'Pitch: no microphone in the online demo' },
   { name: 'Blink', weight: 0.12, sensors: [{ key: 'blink_rate', name: 'Blink rate', direction: 0 }] },
@@ -178,6 +178,7 @@ const SIGMA = 1
 const PRIOR = 0.5
 const INTERVAL_Z = 1.2816
 const Z_MIN = -LAMBDA / SIGMA ** 2
+const FALSE_Z = 2 // overall Z above this marks the answer "false" (verdict.py FALSE_Z)
 const BANDS = [
   ['high', 0.85],
   ['elevated', 0.6],
@@ -460,7 +461,7 @@ function verdictFor(engine, samples, qT, until, qEnd, provisional) {
     model: { lambda: LAMBDA, sigma: SIGMA, prior: PRIOR, interval_z: INTERVAL_Z },
   }
   if (failed || z === null) {
-    Object.assign(v, { band: 'insufficient', result: RESULT.insufficient, likelihood: null, interval: null, reason: failed?.detail ?? 'No signal group could be scored', log_lr: null, z_eff: null })
+    Object.assign(v, { band: 'insufficient', result: RESULT.insufficient, likelihood: null, interval: null, reason: failed?.detail ?? 'No signal group could be scored', log_lr: null, z_eff: null, false: false })
   } else {
     const lr = logLr(z)
     const likelihood = posterior(lr)
@@ -473,6 +474,7 @@ function verdictFor(engine, samples, qT, until, qEnd, provisional) {
       reason: null,
       log_lr: round(lr, 4),
       z_eff: round(Math.max(z, Z_MIN), 3),
+      false: z > FALSE_Z,
     })
   }
   if (!provisional) {

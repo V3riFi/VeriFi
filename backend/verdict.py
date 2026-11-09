@@ -12,6 +12,8 @@ This module adds, on top of that Z:
   2. Interval: P at Z +- INTERVAL_Z (the answer's Z has unit noise under the model).
   3. Band: Low / Unclear / Elevated / High from P (BANDS), or "insufficient" when a quality gate
      fails (GATES). Gates only decide whether to show a reading; they never change the score.
+     "false": True when the answer's overall Z is more than FALSE_Z standard deviations above
+     the baseline mean (a separate flag beside the band; False when the answer isn't scored).
   4. Explanation (what the dashboard's "Why this reading" plots):
        contribution of each category = w_c * z_c / sqrt(sum w^2)  -> they add up to Z exactly
        null distribution of each category's z: the same scoring run on pseudo-questions placed
@@ -38,6 +40,7 @@ SIGMA = 1.0         # extra spread of Z for a deceptive answer
 PRIOR = 0.5         # prior chance an answer is deceptive (0.5 = no assumption either way)
 INTERVAL_Z = 1.2816  # +-Z for the 80% interval
 Z_MIN = -LAMBDA / SIGMA ** 2  # where the ratio is lowest; calmer answers are floored here
+FALSE_Z = 2.0       # overall Z above this (SDs from the baseline mean) marks the answer "false"
 
 # (band, lowest likelihood). Checked top-down.
 BANDS = (("high", 0.85), ("elevated", 0.60), ("unclear", 0.30), ("low", 0.0))
@@ -279,7 +282,7 @@ def score(engine: Engine | None, samples: list[dict], q_t: float, until: float,
     if failed or z is None:
         reason = failed["detail"] if failed else "No signal group could be scored"
         verdict.update({"band": "insufficient", "result": RESULT["insufficient"], "likelihood": None,
-                        "interval": None, "reason": reason, "log_lr": None, "z_eff": None})
+                        "interval": None, "reason": reason, "log_lr": None, "z_eff": None, "false": False})
     else:
         lr = log_lr(z)
         likelihood = posterior(lr)
@@ -287,7 +290,7 @@ def score(engine: Engine | None, samples: list[dict], q_t: float, until: float,
         band = band_of(likelihood)
         verdict.update({"band": band, "result": RESULT[band], "likelihood": round(likelihood, 4),
                         "interval": [round(min(lo, hi), 4), round(max(lo, hi), 4)], "reason": None,
-                        "log_lr": round(lr, 4), "z_eff": round(max(z, Z_MIN), 3)})
+                        "log_lr": round(lr, 4), "z_eff": round(max(z, Z_MIN), 3), "false": bool(z > FALSE_Z)})
     if not provisional:
         # Percentile among calm moments: both uncentered, so compare the uncentered total.
         verdict["null_total"] = (engine.null_summary("_total", raw["z_total"] if raw else None)

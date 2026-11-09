@@ -125,6 +125,8 @@ export function toVerdict(value) {
     interval: interval(value.interval),
     reason: text(value.reason),
     provisional: Boolean(value.provisional),
+    // Overall Z more than 2 SDs above the baseline mean (backend/verdict.py FALSE_Z).
+    flaggedFalse: value.false === true,
     z: finite(value.z),
     zEff: finite(value.z_eff),
     logLr: finite(value.log_lr),

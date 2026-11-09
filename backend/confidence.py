@@ -38,7 +38,8 @@ Data comes in the same shapes the rest of the backend uses:
 
 Baselines follow scoring.Baseline: physiology and face from the silent baseline; voice signals
 from the voice baseline (reading aloud), voiced samples only; the same MIN_STD floors. Breathing
-is the estimated breathing rate (guided by the Arduino's breath events; slower = suppressed). It uses the voice baseline when there is one, because
+is the estimated breathing rate (guided by the Arduino's breath events; faster or slower than baseline
+is flagged). It uses the voice baseline when there is one, because
 answering out loud changes breathing (the reason scoring.py keeps breath_rate out of stress), so
 it is compared with breathing while reading aloud, not while silent.
 
@@ -245,8 +246,9 @@ def _voice(key: str, name: str, weight: float, direction: int = 0) -> dict:
 # the category (see "Voice" below).
 CATEGORIES = {
     "Breathing": {"weight": 0.20, "sensors": [
-        # Respiration suppression: breathing slows.
-        {"key": "breath_rate", "name": "Breathing rate", "weight": 1.0, "phase": "voice", "direction": -1},
+        # Either direction: breathing faster or slower than the baseline is flagged (stress can
+        # speed it up; respiration suppression slows it down).
+        {"key": "breath_rate", "name": "Breathing rate", "weight": 1.0, "phase": "voice"},
     ]},
     "Cardiac": {"weight": 0.15, "sensors": [
         # Either direction for now: deceleration (recognition) vs acceleration (stress) depends

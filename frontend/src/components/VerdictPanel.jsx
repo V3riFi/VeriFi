@@ -18,6 +18,17 @@ export function BandChip({ band, live = false }) {
   )
 }
 
+// Shown beside the band when the answer's overall score is more than 2 SDs above the
+// baseline mean (backend/verdict.py FALSE_Z).
+export function FalseTag({ verdict }) {
+  if (!verdict?.flaggedFalse) return null
+  return (
+    <span className="false-tag" title="Overall score more than 2 standard deviations above the baseline mean">
+      False
+    </span>
+  )
+}
+
 /* ---------- gauge ---------- */
 
 const CX = 100
@@ -154,7 +165,14 @@ function CurrentAnswer({ session, question, onSelect }) {
       <div className="verdict-current-body">
         <Gauge verdict={verdict} label={question.label} />
         <div className="verdict-current-text">
-          {verdict ? <BandChip band={verdict.band} live={verdict.provisional} /> : <span className="tile-note">Waiting for data…</span>}
+          {verdict ? (
+            <span className="verdict-chips">
+              <BandChip band={verdict.band} live={verdict.provisional} />
+              <FalseTag verdict={verdict} />
+            </span>
+          ) : (
+            <span className="tile-note">Waiting for data…</span>
+          )}
           {verdict?.likelihood !== null && verdict?.interval && (
             <span className="verdict-interval">
               80% range {percent(verdict.interval[0])}–{percent(verdict.interval[1])}%
@@ -261,7 +279,14 @@ function EarlierRow({ session, question, selected, onSelect }) {
           <strong>{question.label}</strong>
           {question.text && <q>{question.text}</q>}
         </span>
-        {verdict ? <BandChip band={verdict.band} live={verdict.provisional} /> : <span className="tile-note">Analyzing…</span>}
+        {verdict ? (
+          <span className="verdict-chips">
+            <BandChip band={verdict.band} live={verdict.provisional} />
+            <FalseTag verdict={verdict} />
+          </span>
+        ) : (
+          <span className="tile-note">Analyzing…</span>
+        )}
         <span className="verdict-row-value">
           <span className="mini-meter" aria-hidden="true">
             {Number.isFinite(value) && <span className={`band-bg-${verdict.band}`} style={{ width: `${value * 100}%` }} />}

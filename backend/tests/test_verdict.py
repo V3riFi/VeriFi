@@ -97,6 +97,13 @@ class Reactions(unittest.TestCase):
         self.assertLess(v["likelihood"], 0.6)
         self.assertNotEqual(v["result"], "reaction")
 
+    def test_false_flag_follows_overall_z(self):
+        calm, _, _ = score(make_session())
+        self.assertFalse(calm["false"])
+        reaction, _, _ = score(make_session(hr=step(20), blink=step(30)))
+        self.assertGreater(reaction["z"], verdict.FALSE_Z)
+        self.assertTrue(reaction["false"])
+
     def test_breathing_is_scored_while_talking(self):
         # Talking slows breathing. The answer is compared with breathing while reading
         # aloud (the voice baseline), so it is scored, and talking alone doesn't look suppressed.
