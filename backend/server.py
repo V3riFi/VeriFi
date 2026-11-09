@@ -99,7 +99,7 @@ class SimulatedGSR:
     """The GSR sensor reads too steadily to use, so the dashboard shows this instead.
 
     Stays close to the average of a real session, so it always matches its own baseline.
-    It has no weight in stress, spike or the verdict, and status reports it as "simulated".
+    It has no weight in stress, spike or the verdict. The status shows the real sensor's connection.
     """
 
     AVERAGE = 17.4  # mean of a real session's GSR readings
@@ -454,7 +454,8 @@ def status_message() -> dict:
         "type": "status",
         "components": {
             "arduino": arduino,
-            "gsr": "simulated",  # see SimulatedGSR
+            # The real sensor's connection (its readings arrive); the values shown are SimulatedGSR's.
+            "gsr": sensor_status("gsr_sensor"),
             "pulse": sensor_status("hr"),
             "breathing": sensor_status("flex"),
             "camera": camera.status,
@@ -500,6 +501,8 @@ last_seen: dict[str, float] = {}  # sample field -> laptop time it last had a va
 
 async def handle_sample(sample: dict) -> None:
     """Every sample, fake or real, goes through here: breathing rate, session, broadcast."""
+    if sample.get("gsr") is not None:  # a real reading arrived: the sensor is connected
+        last_seen["gsr_sensor"] = time.time()
     sample["gsr"] = simulated_gsr.next()
     if sample.get("breath_rate") is None and sample.get("flex") is not None:
         breath_history.append((sample["t"], sample["flex"]))

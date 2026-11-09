@@ -165,11 +165,11 @@ Everything runs locally on one laptop. No cloud.
 | Name | Area |
 |---|---|
 | Aaryan | frontend |
-| Matthew | frontend, OpenCV |
-| Aagrim | OpenCV |
+| Matthew | Tech lead|
+| Aagrim | openCV |
 | Cohen | hardware, firmware |
 | Zhenjie Wang | Parselmouth |
-| Namish | backend |
+| Namish | product manager |
 
 ## For developers
 
