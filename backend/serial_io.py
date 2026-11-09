@@ -16,7 +16,7 @@ Matches firmware/verifi/sensors (10 Hz, one labeled line per sample):
 The older pulse-module sketches are still accepted:
     breath: 0, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
 ("Blood Pressure:" also works in place of "spo2:"; those two values are ignored.)
-breath is 1 on the line where a breath starts and 0 on every other line. Lines starting with "STATUS:"
+breath is 1 on the line where a breath seems to start (an event, not an exact count), else 0. Lines starting with "STATUS:"
 are printed, not parsed.
 
 Heart rate is passed through a median-of-3 filter over *distinct* sensor

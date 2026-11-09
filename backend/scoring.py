@@ -50,31 +50,34 @@ STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data
 ALERT_SD = 2.0
 STRESS_ALERT = round(ALERT_SD / STRESS_FULL_SCALE_SD * 100)
 
-# Breathing arrives as pulses: flex is 1 on the sample where a breath starts, else 0.
-# Breath hold: the longest gap between breaths in the answer window. A gap up to
-# HOLD_TOLERANCE typical breaths is normal; each second beyond counts as 1 SD in spike.
-HOLD_TOLERANCE = 1.5
+# Breathing arrives as events: flex is 1 on the sample where a breath seems to start, else 0.
+# Events can be missed or doubled, so they guide an estimate rather than being counted.
+TYPICAL_BREATH_RATE = 15.0  # breaths/min at rest; the estimate is anchored here. TUNE on real data
+BREATH_EVENT_GAIN = 0.4     # how far the estimate follows the event rate: 0 = never, 1 = fully
+MAX_EVENT_RATE = 40.0       # events/min above this are noise
 MIN_BREATH_WINDOW_S = 15.0  # need this much history before reporting a breathing rate
+# Breath hold: the longest gap between events in the answer window. Up to HOLD_TOLERANCE
+# typical gaps is normal (so one missed event isn't a hold); each second beyond counts as 1 SD in spike.
+HOLD_TOLERANCE = 2.0
 
 
 def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | None:
-    """Breaths per minute from (t, flex) pairs covering the last window_s seconds.
+    """Estimated breaths per minute from (t, flex) pairs covering the last window_s seconds.
 
-    Every flex value of 1 is one breath. None until there's enough data or with fewer
-    than 2 breaths. The rate falls during a hold: once the next breath is overdue, the
-    time since the last one counts.
+    A flex value of 1 is a breath event, and events can be missed or doubled, so they aren't
+    counted as the rate. The estimate starts at TYPICAL_BREATH_RATE and moves part of the way
+    (BREATH_EVENT_GAIN) toward how often events are arriving. None until there's enough
+    history, or with no events at all (the sensor isn't reporting).
     """
     if len(history) < 10 or history[-1][0] - history[0][0] < MIN_BREATH_WINDOW_S:
         return None
     t = np.array([h[0] for h in history])
     x = np.array([h[1] for h in history])
-    breaths = t[x == 1]
-    if len(breaths) < 2:
+    events = int(np.sum(x == 1))
+    if events == 0:
         return None
-    span = breaths[-1] - breaths[0]
-    interval = span / (len(breaths) - 1)
-    elapsed = max(span, t[-1] - breaths[0] - interval)
-    return round(float((len(breaths) - 1) / elapsed * 60), 1)
+    event_rate = min(events / (t[-1] - t[0]) * 60, MAX_EVENT_RATE)
+    return round(float(TYPICAL_BREATH_RATE + BREATH_EVENT_GAIN * (event_rate - TYPICAL_BREATH_RATE)), 1)
 
 
 # Signals that are negative for real. For every other one, a negative value is a sensor's "no reading".
@@ -167,7 +170,7 @@ def stress(recent: list[dict], baseline: Baseline) -> float | None:
 
 
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:
-    """Longest stretch (seconds) inside the window with no breath."""
+    """Longest stretch (seconds) inside the window with no breath event."""
     if baseline.breath_interval is None or np.isnan(flex[in_window]).all():
         return None
     times = t[in_window]

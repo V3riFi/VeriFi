@@ -73,7 +73,7 @@ It uses the real Arduino, camera and mic. `python3 run.py --fake-body` replaces 
 |---|---|---|
 | Skin conductance | Grove GSR | **Simulated.** The sensor reads too steadily to use, so the dashboard shows a flat value at a real session's average. No weight in any score |
 | Heart rate | BioAmp ECG | Change from baseline |
-| Breathing | BioAmp EMG on the chest | One pulse per breath: rate, breath holding |
+| Breathing | BioAmp EMG on the chest | Breath events, used to estimate the rate and spot holds |
 | Face | Webcam + MediaPipe Face Landmarker (`openCV/vision`) | Blink rate (Eye Aspect Ratio), hand over face, lip compression. Blinks ignored if head turned >35° or tilted >25° — keep camera at eye level |
 | Voice | Laptop mic + Parselmouth (`voice/live.py`) | Live: pitch, HNR (voice clarity), jitter, shimmer, loudness, and spectral slope. Per answer: response latency, length, speech rate, pauses, pitch, intonation (pitch SD), HNR. Shown in the dashboard's Voice dropdown, not part of stress. Speech errors, repetitions and stuttering need a transcript, which VeriFi doesn't make |
 
@@ -283,7 +283,7 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 
 | Type | Notes |
 |---|---|
-| `sample` | ~10/sec from Arduino. `t` = laptop Unix time (s). `stress` is 0–100 and appears only after baseline. **Any field may be `null` or missing** — draw a gap, don't crash. `hr` is null until the heartbeat locks; `gsr` is simulated; `flex` is 1 on the sample where a breath starts and 0 otherwise; `breath_rate` until ~15 s; `blink_rate` for the first 10 s of face tracking and whenever no face is visible. `hand_on_face` is boolean. Voice fields (`pitch`, `jitter`, `shimmer`, `hnr`, `spectral_slope`) are null when nobody talks; `voice_db` (loudness) always has a value; all are missing if the mic is off. `hnr` and `spectral_slope` are in dB and can be negative. `hr` updates in ~4 s steps. `temp` in °C, `spo2` in %. |
+| `sample` | ~10/sec from Arduino. `t` = laptop Unix time (s). `stress` is 0–100 and appears only after baseline. **Any field may be `null` or missing** — draw a gap, don't crash. `hr` is null until the heartbeat locks; `gsr` is simulated; `flex` is 1 on the sample where a breath seems to start and 0 otherwise (an event, not an exact count); `breath_rate` is an estimate anchored at 15/min that moves part of the way toward how often events arrive; `breath_rate` until ~15 s; `blink_rate` for the first 10 s of face tracking and whenever no face is visible. `hand_on_face` is boolean. Voice fields (`pitch`, `jitter`, `shimmer`, `hnr`, `spectral_slope`) are null when nobody talks; `voice_db` (loudness) always has a value; all are missing if the mic is off. `hnr` and `spectral_slope` are in dB and can be negative. `hr` updates in ~4 s steps. `temp` in °C, `spo2` in %. |
 | `baseline` | `start` carries the baseline length; `done` carries each signal's `mean`/`std`, plus `alert_sd` and `stress_alert` (the dashboard uses these to draw baseline bands and turn lines red outside them). |
 | `voice_baseline` | Subject reads `sentences` aloud for `duration` s (`VERIFI_VOICE_BASELINE_S`, default 25; `0` skips). `done` carries the baseline again, now with the voice fields (from moments the subject is speaking), plus `reading`: the reading's per-answer features, to compare answers with (`null` if it couldn't be measured). Questions are refused until it's done. Skipped entirely if the mic is broken; if it hears too little speech, an `error` follows and voice has no normal range. The silent baseline also measures room loudness — afterward `pitch`/`jitter`/`shimmer` only count when the voice is ≥6 dB above the room. |
 | `question` | Timestamped echo: `phase` `start` (the dashboard places a marker) or `end` (Done asking). `start` also carries the question's `text` (`null` if none was typed). Both carry `due`: when the response will be sent (Done asking moves it to 10 s after). |
@@ -352,7 +352,7 @@ breath: 0, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
 
 | Field | Meaning |
 |---|---|
-| `breath` | `1` on the line where a breath starts, `0` on every other line: each 1 is one breath. The backend calls it `flex` and derives `breath_rate` |
+| `breath` | `1` on the line where a breath seems to start, `0` on every other line. An event, not an exact count: the backend calls it `flex` and uses how often it arrives to guide an estimated `breath_rate` |
 | `gsr` | Skin conductance raw ADC (0–1023). Read but not used: the dashboard shows a simulated value (see Scoring) |
 | `heartbeat` | BPM from the ECG. `0` = no reading yet |
 | `raw_ecg`, `raw_emg` | Raw ADC values for debugging; the backend ignores them |

@@ -12,8 +12,8 @@ export const GROUPS = [
 export const SIGNALS = [
   { key: 'gsr', field: 'gsr', label: 'Skin conductance (simulated)', unit: 'raw', direction: 'up', minSpan: 8, source: 'gsr', group: 'body' },
   { key: 'hr', field: 'hr', label: 'Heart rate', unit: 'bpm', direction: 'up', minSpan: 16, source: 'pulse', group: 'body' },
-  // Each breath the Arduino counts adds to the rate; the chart and tile both show breaths per minute.
-  { key: 'breathing', field: 'breath_rate', label: 'Breathing', unit: 'per min', direction: 'both', minSpan: 8, source: 'breathing', group: 'body' },
+  // An estimate: breath events only guide it (scoring.breath_rate). The chart and tile both show it.
+  { key: 'breathing', field: 'breath_rate', label: 'Breathing (est.)', unit: 'per min', direction: 'both', minSpan: 8, source: 'breathing', group: 'body' },
   { key: 'blink', field: 'blink_rate', label: 'Blink rate', unit: 'per min', direction: 'both', minSpan: 8, source: 'face', group: 'face' },
   { key: 'hand', field: 'hand_on_face', label: 'Hand on face', unit: '', direction: 'up', boolean: true, source: 'face', group: 'face' },
   { key: 'lip', field: 'lip_compression', label: 'Lip compression', unit: '', direction: 'up', minSpan: 0.4, source: 'face', group: 'face' },

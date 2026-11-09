@@ -134,7 +134,7 @@ class FakeSignals:
         if now < self.hr_bump_until:
             hr += 8
 
-        # A single 1 per breath, as the Arduino sends it; none during a hold.
+        # A single event per breath, as the Arduino sends it; none during a hold.
         flex = 0
         if self.hold and self.hold[0] <= now < self.hold[1]:
             self.next_breath = self.hold[1]

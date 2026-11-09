@@ -1,4 +1,4 @@
-"""Breathing from the Arduino's pulses (each 1 is one breath), and the simulated GSR.
+"""Breathing estimated from the Arduino's breath events, and the simulated GSR.
 
 Run from the repo root: python -m unittest discover -s backend/tests -t .
 """
@@ -30,11 +30,29 @@ def as_samples(history):
 
 
 class BreathRate(unittest.TestCase):
-    def test_each_pulse_is_one_breath(self):
-        self.assertAlmostEqual(scoring.breath_rate(pulses(30), 30), 15.0, places=0)
-        self.assertAlmostEqual(scoring.breath_rate(pulses(30, every=2.0), 30), 30.0, places=0)
+    def test_normal_events_read_as_the_typical_rate(self):
+        self.assertAlmostEqual(scoring.breath_rate(pulses(30), 30), 15.0, delta=1)
 
-    def test_needs_enough_history_and_two_breaths(self):
+    def test_more_events_read_higher_but_only_partly(self):
+        slow = scoring.breath_rate(pulses(30, every=8.0), 30)
+        normal = scoring.breath_rate(pulses(30), 30)
+        fast = scoring.breath_rate(pulses(30, every=2.0), 30)
+        self.assertLess(slow, normal)
+        self.assertLess(normal, fast)
+        self.assertLess(fast, 25)  # events arrive at 30/min
+
+    def test_one_missed_event_barely_moves_it(self):
+        history = pulses(30)
+        full = scoring.breath_rate(history, 30)
+        first = next(i for i, (_, flex) in enumerate(history) if flex == 1)
+        history[first] = (history[first][0], 0)
+        self.assertLess(abs(scoring.breath_rate(history, 30) - full), 1.0)
+
+    def test_noise_bursts_are_capped(self):
+        noisy = [(i / 10, 1) for i in range(300)]
+        self.assertLessEqual(scoring.breath_rate(noisy, 30), 25)
+
+    def test_needs_enough_history_and_some_events(self):
         self.assertIsNone(scoring.breath_rate(pulses(10), 30))
         self.assertIsNone(scoring.breath_rate([(i / 10, 0) for i in range(300)], 30))
 
@@ -58,6 +76,10 @@ class BreathHold(unittest.TestCase):
 
     def test_baseline_learns_the_typical_gap(self):
         self.assertAlmostEqual(self.baseline.breath_interval, 4.0, places=1)
+
+    def test_one_missed_event_is_not_a_hold(self):
+        history = [(t, 0 if 44 <= t < 46 else flex) for t, flex in pulses(50)]
+        self.assertLessEqual(self.hold_in(history), scoring.HOLD_TOLERANCE * self.baseline.breath_interval)
 
     def test_normal_breathing_is_not_a_hold(self):
         self.assertLessEqual(self.hold_in(pulses(50)), scoring.HOLD_TOLERANCE * self.baseline.breath_interval)
