@@ -357,10 +357,9 @@ Each signal's distance from baseline (in SDs) is averaged using these weights, a
 
 | Part | Pins |
 |---|---|
-| Grove GSR | Red → 5V, Black → GND, Yellow → A1, White → not connected |
+| CJMCU-6701 (sweat) | Red → 5V, Black → GND, OUT → A1 |
 | BioAmp ECG (heart rate) | VCC → 5V, GND → GND, OUT → A0 |
 | BioAmp EMG (breathing) | VCC → 5V, GND → GND, OUT → A2 |
-| Question button (interrogator) | D2 → GND (internal pullup, no resistor needed) |
 
 ### Heartbeat detection
 
@@ -380,7 +379,7 @@ The GSR sensor reads too steadily to use, so the backend replaces it with a flat
 
 ```
 STATUS: starting
-breath: 0, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
+breath: 1, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
 ```
 
 | Field | Meaning |
@@ -405,7 +404,7 @@ Lines from older sketches ending in `spo2:` and `temp:` still parse; those two v
 | Aaryan | frontend |
 | Matthew | frontend, OpenCV |
 | Aagrim | OpenCV |
-| Cohen | hardware, OpenCV, backend |
+| Cohen | hardware, firmware |
 | Zhenjie Wang | Parselmouth |
 | Namish | backend |
 
