@@ -300,7 +300,7 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 
 - **Baseline:** the ~60 s calm period at the start. Its mean and std per signal are the reference for everything after.
 - **Question response:** for each signal, peak in the ~10 s window after the question minus the mean of the 2 s before, divided by that signal's baseline std. `spike` combines these, weighted toward heart rate.
-- **Live `stress`:** smoothed, weighted combination of how far each signal is from baseline, scaled 0–100. Weights favour heart rate (0.3), then blink rate (0.13) and lip compression (0.07); GSR has no weight. Heart rate counts only when above baseline; blink counts either way. **Breathing rate is excluded on purpose** — talking changes it, which would spike stress every answer (breath holds still count in each question's `spike`). Outliers above 1 SD get their weight multiplied by their distance. `stress_alert` (25) corresponds to 2 SD.
+- **Live `stress`:** smoothed, weighted combination of how far each signal is from baseline, scaled 0–100. Weights favour heart rate (0.3), then breath holds (0.15), blink rate (0.13) and lip compression (0.07); GSR has no weight. Heart rate counts only when above baseline; blink counts either way. **Breathing rate is excluded on purpose** — talking changes it, which would spike stress every answer. Breath holds count instead, live and in each question's `spike`. Outliers above 1 SD get their weight multiplied by their distance. `stress_alert` (25) corresponds to 2 SD.
 
 ### Per-answer verdict (`backend/verdict.py` on top of `backend/confidence.py`)
 
@@ -321,11 +321,12 @@ The dashboard's **Combined stress** panel shows these live, from `stress_weights
 
 | Signal | Weight | Share of the score |
 |---|---|---|
-| Heart rate (counts only above baseline) | 0.30 | 60% |
-| Blink rate (counts either way) | 0.13 | 26% |
-| Lip compression (counts only above baseline) | 0.07 | 14% |
+| Heart rate (counts only above baseline) | 0.30 | 46% |
+| Breath holds (a gap between breath events running past normal) | 0.15 | 23% |
+| Blink rate (counts either way) | 0.13 | 20% |
+| Lip compression (counts only above baseline) | 0.07 | 11% |
 
-Each signal's distance from baseline (in SDs) is averaged using these weights, and 8 SD maps to 100. A signal more than 1 SD out has its weight multiplied by its distance, so its real share rises during a reaction. A signal with no data is skipped and the others rescale. Skin conductance has no weight because it is simulated; breathing rate is left out because talking changes it, and voice is shown separately.
+Each signal's distance from baseline (in SDs) is averaged using these weights, and 8 SD maps to 100. A signal more than 1 SD out has its weight multiplied by its distance, so its real share rises during a reaction. A signal with no data is skipped and the others rescale. For breath holds, each second past two typical gaps counts as 1 SD, so one missed event doesn't count; after 30 s with no event the sensor is treated as lost and holds are skipped. Skin conductance has no weight because it is simulated; breathing rate is left out because talking changes it, and voice is shown separately.
 
 ### Rules
 

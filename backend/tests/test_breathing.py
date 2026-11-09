@@ -91,6 +91,29 @@ class BreathHold(unittest.TestCase):
         self.assertGreater(self.hold_in(pulses(50, hold=(40, 49))), 8)
 
 
+class HoldsInStress(unittest.TestCase):
+    def setUp(self):
+        calm = [{**sample, "hr": 72.0 + (i % 5) * 0.5} for i, sample in enumerate(as_samples(pulses(40)))]
+        self.baseline = scoring.Baseline(calm, keys=("hr",))
+        self.recent = [{"t": 0.0, "hr": 72.0}, {"t": 0.1, "hr": 73.0}]
+
+    def test_breathing_normally_adds_nothing(self):
+        self.assertEqual(scoring.hold_excess(4.0, self.baseline), 0.0)
+
+    def test_one_missed_event_adds_nothing(self):
+        self.assertEqual(scoring.hold_excess(8.0, self.baseline), 0.0)
+
+    def test_a_hold_raises_stress(self):
+        calm = scoring.stress(self.recent, self.baseline, 4.0)
+        held = scoring.stress(self.recent, self.baseline, 16.0)
+        self.assertGreater(held, calm + 20)
+
+    def test_a_lost_sensor_is_not_a_hold(self):
+        self.assertIsNone(scoring.hold_excess(45.0, self.baseline))
+        without = scoring.stress(self.recent, self.baseline, None)
+        self.assertEqual(scoring.stress(self.recent, self.baseline, 45.0), without)
+
+
 class SimulatedSkin(unittest.TestCase):
     def test_stays_at_the_average_and_inside_the_alert_lines(self):
         gsr = SimulatedGSR()

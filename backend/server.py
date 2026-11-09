@@ -201,6 +201,7 @@ class Session:
         self.voice_done = False
         self.reading: dict | None = None  # the voice baseline's speech features, to compare answers with
         self.room_db: float | None = None  # median mic loudness during the silent baseline
+        self.last_breath: float | None = None  # time of the latest breath event
         self.samples: list[dict] = []
         self.recent: deque[dict] = deque()  # last STRESS_WINDOW_S seconds
         self.stress: float | None = None
@@ -316,6 +317,8 @@ class Session:
                 and sample["voice_db"] < self.room_db + SPEECH_MARGIN_DB:
             for key in SPEECH_KEYS:
                 sample[key] = None  # room noise, not the subject
+        if sample.get("flex") == 1:
+            self.last_breath = t
         self.samples.append(sample)
         self.recent.append(sample)
         while self.recent[0]["t"] < t - scoring.STRESS_WINDOW_S:
@@ -366,7 +369,8 @@ class Session:
             events.append(event)
 
         if self.baseline is not None:
-            raw = scoring.stress(list(self.recent), self.baseline)
+            gap = None if self.last_breath is None else t - self.last_breath
+            raw = scoring.stress(list(self.recent), self.baseline, gap)
             if raw is not None:
                 self.stress = raw if self.stress is None else self.stress + STRESS_SMOOTHING * (raw - self.stress)
                 sample["stress"] = round(self.stress)

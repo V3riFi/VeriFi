@@ -1,6 +1,7 @@
 import { SIGNALS } from '../lib/signals'
 
-const labelOf = (field) => SIGNALS.find((s) => s.field === field)?.label ?? field
+const OTHER_LABELS = { breath_hold: 'Breath holds' }
+const labelOf = (field) => OTHER_LABELS[field] ?? SIGNALS.find((s) => s.field === field)?.label ?? field
 
 // How much each signal counts toward the combined stress score. The weights come from the
 // backend (scoring.STRESS_WEIGHTS), so this can't drift from what is actually calculated.
@@ -28,8 +29,8 @@ export default function StressWeights({ weights }) {
       </ul>
       <p>
         Starting weights. A signal more than 1 SD from its baseline counts for more, so its share rises during a
-        reaction. Skin conductance is simulated and has no weight. Breathing is left out because talking changes it,
-        and voice is shown separately.
+        reaction. Skin conductance is simulated and has no weight. Breathing rate is left out because talking changes it,
+        so only breath holds count, and voice is shown separately.
       </p>
     </div>
   )

@@ -39,8 +39,8 @@ SPIKE_WEIGHTS = {"hr": 0.25, "breath_hold": 0.15}
 # STRESS_FULL_SCALE_SD maps to 100.
 # breath_rate is NOT in stress: answering out loud changes breathing, and with it
 # in, talking alone pushed stress to ~94 with heart rate flat. Breath
-# holds still count, per question, in the spike score (SPIKE_WEIGHTS).
-STRESS_WEIGHTS = {"hr": 0.3, "blink_rate": 0.13, "lip_compression": 0.07}
+# holds count instead: live here (the "breath_hold" weight) and per question in spike (SPIKE_WEIGHTS).
+STRESS_WEIGHTS = {"hr": 0.3, "breath_hold": 0.15, "blink_rate": 0.13, "lip_compression": 0.07}
 # Heart rate only counts when above baseline. These count a change either way.
 STRESS_TWO_SIDED = {"blink_rate"}
 STRESS_WINDOW_S = 2.0
@@ -60,6 +60,7 @@ MIN_BREATH_WINDOW_S = 15.0  # need this much history before reporting a breathin
 # typical gaps is normal (so one missed event isn't a hold); each second beyond counts as 1 SD in spike.
 HOLD_TOLERANCE = 2.0
 BREATH_LOOKBACK_S = 15.0  # history kept before a question, to find the event that opened its gap
+HOLD_SENSOR_LOST_S = 30.0  # no breath event for this long is a lost sensor, not a held breath
 
 
 def inhale_times(t: np.ndarray, flex: np.ndarray) -> np.ndarray:
@@ -156,18 +157,37 @@ def _weighted(parts: dict[str, float], weights: dict[str, float]) -> float | Non
     return sum(parts[k] * w for k, w in used.items()) / sum(used.values())
 
 
-def stress(recent: list[dict], baseline: Baseline) -> float | None:
-    """0-100, how far the signals currently sit from baseline. Not smoothed (the session smooths it)."""
+def hold_excess(gap_s: float | None, baseline: Baseline) -> float | None:
+    """Seconds the current gap between breath events runs past normal, 0 while breathing is normal.
+
+    Counts like SDs in stress. None with no breathing data, or when the gap is so long
+    that the sensor has probably stopped reporting.
+    """
+    if gap_s is None or baseline.breath_gap is None or gap_s > HOLD_SENSOR_LOST_S:
+        return None
+    return max(0.0, gap_s - HOLD_TOLERANCE * baseline.breath_gap)
+
+
+def stress(recent: list[dict], baseline: Baseline, breath_gap_s: float | None = None) -> float | None:
+    """0-100, how far the signals currently sit from baseline. Not smoothed (the session smooths it).
+
+    breath_gap_s: seconds since the last breath event, for the breath-hold part of the score.
+    """
     weighted_sum = total_weight = 0.0
     for key, weight in STRESS_WEIGHTS.items():
-        if key not in baseline.mean:
-            continue
-        x = column(recent, key)
-        x = x[~np.isnan(x)]
-        if not len(x):
-            continue
-        z = baseline.z(key, float(x.mean()))
-        distance = abs(z) if key in STRESS_TWO_SIDED else max(z, 0.0)
+        if key == "breath_hold":
+            distance = hold_excess(breath_gap_s, baseline)
+            if distance is None:
+                continue
+        else:
+            if key not in baseline.mean:
+                continue
+            x = column(recent, key)
+            x = x[~np.isnan(x)]
+            if not len(x):
+                continue
+            z = baseline.z(key, float(x.mean()))
+            distance = abs(z) if key in STRESS_TWO_SIDED else max(z, 0.0)
         effective = weight * max(1.0, distance)  # outliers count for more
         weighted_sum += effective * distance
         total_weight += effective
