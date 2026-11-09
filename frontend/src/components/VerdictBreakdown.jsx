@@ -600,7 +600,7 @@ function Numbers({ verdict }) {
                   <td>{fixed(s.weight, 2)}</td>
                   <td>
                     {fixed(s.base, 2)} ± {fixed(s.baseSd, 2)}
-                    {s.phasic && <small> before</small>}
+                    {(s.phasic || s.delta) && <small> before</small>}
                   </td>
                   <td>
                     {fixed(s.now, 2)}

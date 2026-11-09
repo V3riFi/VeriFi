@@ -51,6 +51,8 @@ MAX_GAP_S = 2.0         # longest allowed gap between samples in the window
 
 # Explanation
 PSEUDO_STEP_S = 1.0     # spacing of pseudo-questions across the silent baseline
+MIN_CENTER_N = 10       # pseudo-questions a category needs before its calm offset is removed
+VOICE_PSEUDO_S = 3.0    # speech per pseudo-answer in the read-aloud baseline (voice categories)
 NULL_EDGES = tuple(np.round(np.arange(-4.0, 4.01, 0.5), 2))  # histogram bins of z (clamped)
 NULL_TIE_SD = 0.05      # z values this close to a calm moment count as equal to it
 TRACE_S = 10.0          # trace slice: this many seconds either side of the question
@@ -124,6 +126,25 @@ class Engine:
             if result["z_total"] is not None:
                 self.null.setdefault("_total", []).append(result["z_total"])
             t += PSEUDO_STEP_S
+        # Voiced signals have no calm moments in the silent baseline. Pseudo-answers across the
+        # read-aloud baseline give the voice categories theirs (about an answer's worth of speech).
+        self.voice_null: dict[str, list[float]] = {}
+        if voice:
+            t = voice[0]
+            while t + VOICE_PSEUDO_S <= voice[1]:
+                result = confidence.score_question(samples, self.baselines, t, t + VOICE_PSEUDO_S, t)
+                for name, cat in result["categories"].items():
+                    if any(s.get("voiced") for s in confidence.CATEGORIES[name]["sensors"]):
+                        self.voice_null.setdefault(name, []).append(cat["z"])
+                t += PSEUDO_STEP_S
+
+    def center(self, name: str) -> float:
+        """The category's average z on calm pseudo-questions, removed from answers' z so a calm
+        answer scores ~0 for this person. Voice categories use pseudo-answers in the read-aloud
+        baseline. 0 without enough pseudo-questions. Only a shift: the pseudo-questions are part of the
+        baseline itself, so their spread would understate a real answer's."""
+        values = self.voice_null.get(name) or self.null.get(name) or []
+        return float(np.mean(values)) if len(values) >= MIN_CENTER_N else 0.0
 
     def null_summary(self, name: str, value: float | None) -> dict | None:
         values = self.null.get(name)
@@ -180,7 +201,8 @@ def _gates(engine: Engine | None, raw: dict | None, samples: list[dict], q_t: fl
 
 def _signal(s: dict) -> dict:
     return {"key": s["key"], "name": s["name"], "weight": s["weight"], "direction": s["direction"],
-            "phasic": "pre_mu" in s, "base": round(s["base_mu"], 3), "base_sd": round(s["base_sigma"], 3),
+            "phasic": s.get("measure") == "phasic", "delta": s.get("measure") == "delta",
+            "base": round(s["base_mu"], 3), "base_sd": round(s["base_sigma"], 3),
             "now": round(s["mu"], 3), "now_sd": round(s["sigma"], 3), "z": round(s["z"], 3),
             "p": round(s["p"], 4), "n": s.get("n")}
 
@@ -229,6 +251,10 @@ def score(engine: Engine | None, samples: list[dict], q_t: float, until: float,
     if raw:
         weights = np.array([c["weight"] for c in raw["categories"].values()], dtype=float)
         norm = float(np.sqrt(np.sum(weights ** 2))) or 1.0
+        # Each category relative to this person's calm moments (Engine.center), then recombined.
+        centered = {name: r["z"] - engine.center(name) for name, r in raw["categories"].items()}
+        if raw["z_total"] is not None:
+            z = float(sum(r["weight"] * centered[name] for name, r in raw["categories"].items()) / norm)
         missing: dict[str, list[str]] = {}
         for cat_name, name, why in raw["skipped"]:
             missing.setdefault(cat_name, []).append(f"{name}: {why}")
@@ -238,7 +264,7 @@ def score(engine: Engine | None, samples: list[dict], q_t: float, until: float,
             if r is None:
                 entry.update({"z": None, "contribution": None, "suspicion": None})
             else:
-                entry.update({"z": round(r["z"], 3), "contribution": round(r["weight"] * r["z"] / norm, 3),
+                entry.update({"z": round(centered[name], 3), "contribution": round(r["weight"] * centered[name] / norm, 3),
                               "suspicion": round(1 - r["confidence"], 4), "method": r["method"]})
                 if not provisional:
                     entry["signals"] = [_signal(s) for s in r["sensors"]]
@@ -263,7 +289,9 @@ def score(engine: Engine | None, samples: list[dict], q_t: float, until: float,
                         "interval": [round(min(lo, hi), 4), round(max(lo, hi), 4)], "reason": None,
                         "log_lr": round(lr, 4), "z_eff": round(max(z, Z_MIN), 3)})
     if not provisional:
-        verdict["null_total"] = engine.null_summary("_total", z) if engine and engine.ready else None
+        # Percentile among calm moments: both uncentered, so compare the uncentered total.
+        verdict["null_total"] = (engine.null_summary("_total", raw["z_total"] if raw else None)
+                                 if engine and engine.ready else None)
         verdict["trace"] = _trace(samples, q_t, q_end, until)
     return verdict, raw
 
