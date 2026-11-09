@@ -65,6 +65,10 @@ VOICE_SENTENCES = [
 # measures the room's loudness; after it, voice only counts as the subject speaking
 # when it's this much louder. TUNE: raise it if background chatter still gets through.
 SPEECH_MARGIN_DB = 6.0
+# Off by default: people talk during the silent baseline (e.g. the pitch demo), which would set
+# the "room level" to a voice level and make the subject's answers too quiet to count. With it
+# off, every voice the mic hears counts as the subject. VERIFI_ROOM_NOISE=1 turns it back on.
+ROOM_NOISE_FROM_BASELINE = os.environ.get("VERIFI_ROOM_NOISE") == "1"
 # Warn when a voice is heard for at least this share of the silent baseline (it should be ~0).
 TALKING_IN_BASELINE = 0.3
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
@@ -329,7 +333,7 @@ class Session:
             silent = [s for s in self.samples if s["t"] >= self.started]
             self.baseline = scoring.Baseline(silent)
             room = sorted(s["voice_db"] for s in silent if s.get("voice_db") is not None)
-            if room:
+            if room and ROOM_NOISE_FROM_BASELINE:
                 self.room_db = room[len(room) // 2]
                 print(f"voice: room level {self.room_db:.1f} dB, speech counts above "
                       f"{self.room_db + SPEECH_MARGIN_DB:.1f} dB", flush=True)
