@@ -147,8 +147,9 @@ def weighted_chi2_sf(q: float, weights) -> tuple[float, float]:
 
 
 def baseline_lookup(baselines: dict) -> dict:
-    """{(category, sensor name): (mu, sigma)}."""
-    return {(cat_name, s["name"]): (s["mu"], s["sigma"])
+    """{(category, sensor name): (mu, sigma, window_sigma)}. window_sigma: sigma is already the
+    spread of answer-length window means (see baselines_from_samples), not of single samples."""
+    return {(cat_name, s["name"]): (s["mu"], s["sigma"], s.get("window_sigma", False))
             for cat_name, cat in baselines.items() for s in cat["sensors"]}
 
 
@@ -171,8 +172,11 @@ def evaluate_category(cat_name: str, sensors: list, lookup: dict) -> dict:
     """
     rows = []
     for pt in sensors:
-        mu_b, sigma_b = lookup[(cat_name, pt["name"])]
-        sigma_combined = math.sqrt(sigma_b ** 2 + pt["sigma"] ** 2)
+        mu_b, sigma_b, window_sigma = lookup[(cat_name, pt["name"])]
+        # A window mean is compared with how much calm window means vary (window_sigma). The
+        # answer's own spread is left out: a reaction that builds during the answer widens it,
+        # which would shrink the very z it should raise.
+        sigma_combined = sigma_b if window_sigma else math.sqrt(sigma_b ** 2 + pt["sigma"] ** 2)
         diff = (pt["mu"] - mu_b) / sigma_combined
         direction = pt.get("direction", 0)
         if direction:
@@ -224,6 +228,8 @@ def evaluate(baselines: dict, categories: dict) -> dict:
 # "voiced": only samples where the subject is speaking (pitch present) count.
 # "direction": +1 a rise is suspicious, -1 a drop is, 0 (default) either way.
 # "phasic": (from, to) seconds after the question: peak there minus the PRE_S before (see top).
+# "delta": seconds before the question: the answer window's mean minus the mean of those seconds,
+#          against how much that difference varies across the calm baseline (for drifting signals).
 
 def _voice(key: str, name: str, weight: float, direction: int = 0) -> dict:
     return {"key": key, "name": name, "weight": weight, "phase": "voice", "voiced": True, "direction": direction}
@@ -245,7 +251,10 @@ CATEGORIES = {
     "Cardiac": {"weight": 0.15, "sensors": [
         # Either direction for now: deceleration (recognition) vs acceleration (stress) depends
         # on the question type.
-        {"key": "hr", "name": "Heart rate", "weight": 1.0},
+        # "delta": compared with the 5 s before Ask, not the session baseline: heart rate drifts
+        # over minutes, and against a baseline from the start of the session calm answers late
+        # in it read as reactions.
+        {"key": "hr", "name": "Heart rate", "weight": 1.0, "delta": 5.0},
     ]},
     # Signal weights inside Voice (ratios only):
     #   pitch 1.0 (+)     the most consistent vocal stress finding (pitch rises)
@@ -279,6 +288,12 @@ MIN_BASELINE_SAMPLES = 2                        # ddof=1 needs two
 MIN_VOICE_BASELINE = scoring.MIN_VOICE_SAMPLES  # as scoring.Baseline.add_voice
 MIN_WINDOW_SAMPLES = 3                          # values needed in the answer window
 MIN_VOICE_WINDOW = 5                            # voiced samples in the answer (~0.5 s of speech at 10 Hz)
+# Calibration: how much an answer-length window's mean wanders when nothing happens, measured by
+# sliding windows across the baseline. Answers are scored ~10 s after "Done asking" (about 12 s
+# after Ask); voiced signals only on the subject's speech, a few seconds per answer.
+NULL_WINDOW_S, NULL_STEP_S = scoring.WINDOW_S + 2.0, 1.0
+NULL_VOICED_WINDOW_S, NULL_VOICED_STEP_S = 3.0, 0.5
+MIN_NULL_WINDOWS = 5                            # fewer: fall back to the sample spread
 
 
 def _values(samples: list[dict], key: str, voiced: bool,
@@ -292,6 +307,34 @@ def _values(samples: list[dict], key: str, voiced: bool,
     t = scoring.column(samples, "t")
     x = scoring.column(samples, key)
     return x[(t >= start) & (t <= end) & ~np.isnan(x)]
+
+
+def _window_mean_sd(samples: list[dict], key: str, voiced: bool, pre_s: float | None = None) -> float | None:
+    """Spread (std) of the signal's mean over answer-length windows slid across samples, or None
+    with fewer than MIN_NULL_WINDOWS windows. Voiced windows count speaking time only. pre_s (a
+    "delta" signal): the spread of (window mean - mean of the pre_s seconds before it) instead."""
+    if voiced:
+        samples = [s for s in samples if s.get("pitch") is not None]
+    t, x = scoring.column(samples, "t"), scoring.column(samples, key)
+    ok = ~np.isnan(x)
+    t, x = t[ok], x[ok]
+    if not len(t):
+        return None
+    if voiced:  # speaking time: stitch the voiced samples together, 1 / 10 s apart
+        t = np.arange(len(t)) / 10.0
+    length, step = (NULL_VOICED_WINDOW_S, NULL_VOICED_STEP_S) if voiced else (NULL_WINDOW_S, NULL_STEP_S)
+    need = MIN_VOICE_WINDOW if voiced else MIN_WINDOW_SAMPLES
+    means, start = [], t[0]
+    while start + length <= t[-1] + 1e-9:
+        w = x[(t >= start) & (t < start + length)]
+        if pre_s is not None:
+            before = x[(t >= start - pre_s) & (t < start)]
+            if len(w) >= need and len(before) >= need:
+                means.append(float(w.mean() - before.mean()))
+        elif len(w) >= need:
+            means.append(float(w.mean()))
+        start += step
+    return float(np.std(means, ddof=1)) if len(means) >= MIN_NULL_WINDOWS else None
 
 
 def _between(samples: list[dict], start: float, end: float) -> list[dict]:
@@ -320,7 +363,11 @@ def baselines_from_samples(silent: list[dict], voice: list[dict] | None = None,
                 skipped.append((cat_name, s["name"], f"baseline has {len(x)} values (needs {need})"))
                 continue
             st = stats_from_data(x)
-            st["sigma"] = max(st["sigma"], MIN_STD.get(s["key"], 0.0))
+            floor = MIN_STD.get(s["key"], 0.0)
+            st["sigma"] = max(st["sigma"], floor)
+            window_sd = _window_mean_sd(source, s["key"], voiced, s.get("delta"))
+            if window_sd is not None:  # the yardstick for an answer's mean (see baseline_lookup)
+                st.update({"sample_sigma": st["sigma"], "sigma": max(window_sd, floor), "window_sigma": True})
             sensors.append({"name": s["name"], "key": s["key"], **st, "n": len(x)})
         out[cat_name] = {"sensors": sensors}
     return out, skipped
@@ -358,7 +405,7 @@ def readings_from_samples(samples: list[dict], baselines: dict, q_t: float, unti
                     skipped.append((cat_name, s["name"], f"{len(pre)} values before the question and "
                                     f"{len(post)} at {lo:g}-{hi:g} s (needs 1 and {MIN_WINDOW_SAMPLES})"))
                     continue
-                sensors.append({**reading, "mu": float(post.max()), "sigma": 0.0,
+                sensors.append({**reading, "mu": float(post.max()), "sigma": 0.0, "measure": "phasic",
                                 "pre_mu": float(pre.mean()), "n": len(post)})
                 continue
             start = q_end if voiced and q_end is not None else q_t
@@ -367,6 +414,13 @@ def readings_from_samples(samples: list[dict], baselines: dict, q_t: float, unti
             if len(x) < need:
                 skipped.append((cat_name, s["name"], f"window has {len(x)} values (needs {need})"))
                 continue
+            if "delta" in s:
+                pre = _values(samples, s["key"], voiced, q_t - s["delta"], before)
+                if len(pre) < MIN_WINDOW_SAMPLES:
+                    skipped.append((cat_name, s["name"], f"{len(pre)} values in the {s['delta']:g} s before "
+                                    f"the question (needs {MIN_WINDOW_SAMPLES})"))
+                    continue
+                reading.update({"measure": "delta", "pre_mu": float(pre.mean())})
             sensors.append({**reading, **stats_from_data(x), "n": len(x)})
         out[cat_name] = {"weight": cat["weight"], "sensors": sensors}
     return out, skipped
@@ -379,7 +433,8 @@ def score_question(samples: list[dict], baselines: dict, q_t: float, until: floa
     "mean" signals are compared with the session baseline. "phasic" ones with the seconds just
     before the question, using the session baseline's sigma (as scoring.response does).
     """
-    nearby = _between(samples, q_t - scoring.PRE_S, until)
+    lookback = max([scoring.PRE_S] + [s.get("delta", 0.0) for cat in categories.values() for s in cat["sensors"]])
+    nearby = _between(samples, q_t - lookback, until)
     current, skipped = readings_from_samples(nearby, baselines, q_t, until, q_end, categories)
     lookup_base = {}
     for c, cat in baselines.items():
@@ -420,7 +475,8 @@ def to_message(result: dict, categories: dict = CATEGORIES) -> dict:
             "suspicion": None if r is None else round(1 - r["confidence"], 4),
             "signals": [] if r is None else [
                 {"key": s["key"], "name": s["name"], "weight": s["weight"], "direction": s["direction"],
-                 "phasic": "pre_mu" in s, "base": round(s["base_mu"], 3), "now": round(s["mu"], 3),
+                 "phasic": s.get("measure") == "phasic", "delta": s.get("measure") == "delta",
+                 "base": round(s["base_mu"], 3), "now": round(s["mu"], 3),
                  "z": round(s["z"], 2), "suspicion": round(1 - s["p"], 4)}
                 for s in r["sensors"]],
             "missing": missing.get(cat_name, []),
@@ -516,9 +572,12 @@ def print_result(result: dict, title: str = "") -> None:
             arrow = {1: "+", -1: "-"}.get(s.get("direction", 0), "+/-")
             print(f"{s['name']:<22} | {arrow:>3} | {s['weight']:>5.2f} | {s['base_mu']:>9.3f} | "
                   f"{s['base_sigma']:>8.3f} | {s['mu']:>9.3f} | {s['sigma']:>8.3f} | {s['z']:>7.3f} | {s['p']:>11.2%}")
-            if "pre_mu" in s:
+            if s.get("measure") == "phasic":
                 print(f"{'':<22}   (phasic: Base mu = mean of the {scoring.PRE_S:g} s before the question, "
                       f"Now mu = peak in the latency window)")
+            elif s.get("measure") == "delta":
+                print(f"{'':<22}   (delta: Base mu = mean of the seconds before the question, "
+                      f"Now mu = mean of the answer window)")
         if r.get("method", "chi2") == "chi2":
             print(f"-> Weighted Chi-Sq: {r['chi2']:.4f} (df {r['df']:.2f}) | "
                   f"CATEGORY CONFIDENCE: {r['confidence']:.2%}\n")

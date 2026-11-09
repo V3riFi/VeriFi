@@ -67,6 +67,7 @@ function signal(value) {
     weight: finite(value.weight) ?? 0,
     direction: [1, -1].includes(value.direction) ? value.direction : 0,
     phasic: Boolean(value.phasic),
+    delta: Boolean(value.delta), // compared with the seconds just before the question
     base: finite(value.base),
     baseSd: finite(value.base_sd),
     now: finite(value.now),
