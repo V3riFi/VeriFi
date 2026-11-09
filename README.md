@@ -174,3 +174,40 @@ Everything runs locally on one laptop. No cloud.
 ## For developers
 
 [docs/TECHNICAL.md](docs/TECHNICAL.md) has the full setup, the WebSocket contract (message formats), scoring definitions and constants, hardware wiring, the serial protocol and troubleshooting. Code comments that say "see README" refer to that file. Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Sources
+
+Skin, breathing, heart (top weights)
+Meijer et al. (2014), CIT meta-analysis of skin conductance, respiration, heart rate and P300: https://doi.org/10.1111/psyp.12239
+Ben-Shakhar & Elaad (2003), Guilty Knowledge Test meta-analysis: https://doi.org/10.1037/0021-9010.88.1.131
+Lykken (1959), The GSR in the detection of guilt: https://doi.org/10.1037/h0046060
+National Research Council (2003), The Polygraph and Lie Detection (free to read): https://doi.org/10.17226/10420
+Verschuere, Ben-Shakhar & Meijer (2011), Memory Detection (book): https://doi.org/10.1017/CBO9780511975196
+Behavioural cues (voice, blink, lip, hand, gaze)
+DePaulo et al. (2003), Cues to deception: https://doi.org/10.1037/0033-2909.129.1.74
+Sporer & Schwandt (2006), Paraverbal indicators of deception: https://doi.org/10.1002/acp.1190
+Sporer & Schwandt (2007), Moderators of nonverbal indicators of deception: https://doi.org/10.1037/1076-8971.13.1.1
+Leal & Vrij (2008), Blinking during and after lying: https://doi.org/10.1007/s10919-008-0051-0
+Fukuda (2001), Eye blinks: new indices for the detection of deception: https://doi.org/10.1016/S0167-8760(00)00192-6
+Giddens et al. (2013), Vocal indices of stress: A review: https://doi.org/10.1016/j.jvoice.2012.12.010
+Harnsberger et al. (2009), Stress and deception in speech (layered voice analysis): https://doi.org/10.1111/j.1556-4029.2009.01026.x
+Wiseman et al. (2012), The eyes don’t have it (free to read): https://doi.org/10.1371/journal.pone.0040259
+Ekman & Friesen (1969), Nonverbal leakage and clues to deception: https://doi.org/10.1080/00332747.1969.11023575
+Porter & ten Brinke (2008), Reading between the lies: https://doi.org/10.1111/j.1467-9280.2008.02116.x
+Mann, Vrij & Bull (2002), Suspects, lies, and videotape: https://doi.org/10.1023/A:1015332606792
+Theory: why liars act differently
+Zuckerman, DePaulo & Rosenthal (1981), Verbal and nonverbal communication of deception: https://doi.org/10.1016/S0065-2601(08)60369-X
+Vrij, Granhag & Porter (2010), Pitfalls and opportunities in lie detection: https://doi.org/10.1177/1529100610390861
+Vrij, Hartwig & Granhag (2019), Reading lies (Annual Review of Psychology): https://doi.org/10.1146/annurev-psych-010418-103135
+Vrij (2008), Detecting Lies and Deceit, 2nd ed., Wiley (no DOI): https://scholar.google.com/scholar?q=Vrij+2008+Detecting+Lies+and+Deceit+Pitfalls+and+Opportunities
+Why you combine signals and use a baseline
+Bond & DePaulo (2006), Accuracy of deception judgments: https://doi.org/10.1207/s15327957pspr1003_2
+Hartwig & Bond (2011), Why do lie-catchers fail?: https://doi.org/10.1037/a0023589
+Suchotzki et al. (2017), Lying takes time: https://doi.org/10.1037/bul0000087
+Meijer et al. (2016), Deception detection with behavioral, autonomic, and neural measures: https://doi.org/10.1111/psyp.12609
+Lukács, Kleinberg & Verschuere (2017), Familiarity-related fillers (cited in METHOD.md): https://doi.org/10.1016/j.jarmac.2017.01.013
+Math for combining them
+Stouffer et al. (1949), The American Soldier, Vol. 1 (no DOI): https://scholar.google.com/scholar?q=Stouffer+1949+The+American+Soldier+Adjustment+During+Army+Life
+Whitlock (2005), The weighted Z-method is superior to Fisher’s approach: https://doi.org/10.1111/j.1420-9101.2005.00917.x
+Zaykin (2011), Optimally weighted Z-test: https://doi.org/10.1111/j.1420-9101.2011.02297.x
+Satterthwaite (1946), An approximate distribution of estimates of variance components: https://doi.org/10.2307/3002019
