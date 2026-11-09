@@ -8,11 +8,11 @@ from backend.serial_io import parse_line
 class ParseLine(unittest.TestCase):
     def test_bioamp_sketch(self):
         sample = parse_line("breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508")
-        self.assertEqual(sample, {"flex": 120, "gsr": 480, "hr": 72, "spo2": None, "temp": None})
+        self.assertEqual(sample, {"flex": 120, "gsr": 480, "hr": 72})
 
     def test_pulse_module_sketch(self):
         sample = parse_line("breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5")
-        self.assertEqual(sample, {"flex": 512, "gsr": 480, "hr": 72, "spo2": 98, "temp": 31.5})
+        self.assertEqual(sample, {"flex": 512, "gsr": 480, "hr": 72})
 
     def test_no_heartbeat_yet_is_missing(self):
         self.assertIsNone(parse_line("breath: 1, gsr: 2, heartbeat: 0, raw_ecg: 3, raw_emg: 4")["hr"])

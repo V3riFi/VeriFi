@@ -6,7 +6,7 @@ const COMPONENTS = [
   { key: 'arduino', label: 'Arduino' },
   { key: 'gsr', label: 'GSR' },
   { key: 'pulse', label: 'Pulse' },
-  { key: 'breathing', label: 'Breathing belt' },
+  { key: 'breathing', label: 'Breathing' },
   { key: 'camera', label: 'Camera' },
   { key: 'face', label: 'Face tracking' },
   { key: 'voice', label: 'Voice' },

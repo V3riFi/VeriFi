@@ -9,7 +9,7 @@ adds the live stress indicator to samples, and logs every session to data/
 
 Data source:
   - default: the Arduino over USB serial (backend/serial_io.py), auto-detected
-  - VERIFI_FAKE=1: fake signals, no hardware needed. Fake GSR/HR/breathing
+  - VERIFI_FAKE=1: fake signals, no hardware needed. Fake HR/breathing
     react to about half the questions so spikes show up.
 
 Env variables:
@@ -70,18 +70,18 @@ TALKING_IN_BASELINE = 0.3
 STRESS_SMOOTHING = 0.1  # 0-1 per sample, lower = smoother live stress
 BREATH_WINDOW_S = 30.0  # breathing rate is counted over this many seconds
 DATA_DIR = Path("data")
-VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope", "vocal_tension"]
+VOICE_KEYS = ["pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope"]
 SPEECH_KEYS = ("pitch", "jitter", "shimmer", "hnr", "spectral_slope")  # None unless the subject is speaking
 # After "Done asking", the answer gets this long before its response is sent.
 ANSWER_S = 10.0
 # Per-answer voice features: the "voice" object in "response" (see voice/live.py answer_features).
 ANSWER_KEYS = ["latency_s", "latency_marked", "duration_s", "speech_rate", "pauses", "pause_s",
-               "pitch", "intonation", "hnr", "tension", "cut"]
+               "pitch", "intonation", "hnr", "cut"]
 VOICE_RESULT_TIMEOUT_S = 5.0
 # While an answer's window is open, a provisional verdict on the partial window goes out this often.
 PROGRESS_EVERY_S = 0.3
 FACE_KEYS = ["blink_rate", "hand_on_face", "lip_compression"]
-SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", "temp", "spo2", *FACE_KEYS, *VOICE_KEYS]
+SIGNAL_KEYS = ["gsr", "hr", "flex", "breath_rate", *FACE_KEYS, *VOICE_KEYS]
 
 clients: set[Client] = set()
 
@@ -89,59 +89,64 @@ clients: set[Client] = set()
 # ----------------------------- Fake signals --------------------------------
 
 
+class SimulatedGSR:
+    """The GSR sensor reads too steadily to use, so the dashboard shows this instead.
+
+    Stays close to the average of a real session, so it always matches its own baseline.
+    It has no weight in stress, spike or the verdict, and status reports it as "simulated".
+    """
+
+    AVERAGE = 17.4  # mean of a real session's GSR readings
+    MAX_OFFSET = 1.8  # stays inside the alert line (2 * scoring.MIN_STD["gsr"])
+
+    def __init__(self) -> None:
+        self.offset = 0.0
+
+    def next(self) -> float:
+        self.offset += random.gauss(0, 0.26) - 0.1 * self.offset
+        self.offset = max(-self.MAX_OFFSET, min(self.MAX_OFFSET, self.offset))
+        return round(self.AVERAGE + self.offset, 1)
+
+
 class FakeSignals:
     """Plausible-looking sensor values. react() makes them respond to a question."""
 
     def __init__(self) -> None:
-        self.gsr = 450.0
         self.t0 = time.time()
-        self.gsr_rises: list[tuple[float, float]] = []  # (start time, total rise)
         self.hr_bump_until = 0.0
         self.hold: tuple[float, float] | None = None  # (start, end) of a breath hold
-        self.hold_flex = 330.0
+        self.next_breath = self.t0 + 4.0
 
     def react(self, now: float) -> None:
         """Called when a question is asked. About half the questions get a reaction."""
         if random.random() < 0.5:
             return
-        size = random.uniform(0.5, 1.5)
-        self.gsr_rises.append((now + random.uniform(1.5, 3.0), 40 * size))
         self.hr_bump_until = now + 8
         if random.random() < 0.5:
             start = now + random.uniform(0.5, 2.0)
-            self.hold = (start, start + random.uniform(2.5, 4.0))
+            self.hold = (start, start + random.uniform(7.0, 10.0))
 
     def sample(self) -> dict:
         now = time.time()
         elapsed = now - self.t0
-        period = 1 / SAMPLE_HZ
-
-        # GSR: slow drift back to rest, noise, and question responses rising over ~3 s.
-        self.gsr += random.gauss(0, 0.8)
-        self.gsr += (450 - self.gsr) * 0.002
-        for start, rise in self.gsr_rises:
-            if start <= now < start + 3:
-                self.gsr += rise * period / 3
-        self.gsr_rises = [r for r in self.gsr_rises if now < r[0] + 3]
 
         hr = 72 + 4 * math.sin(elapsed / 7) + random.gauss(0, 0.5)
         if now < self.hr_bump_until:
             hr += 8
 
-        flex = 330 + 25 * math.sin(2 * math.pi * 0.25 * elapsed)  # 15 breaths/min
+        # A single 1 per breath, as the Arduino sends it; none during a hold.
+        flex = 0
         if self.hold and self.hold[0] <= now < self.hold[1]:
-            flex = self.hold_flex  # chest stops moving
-        else:
-            self.hold_flex = flex
-        flex += random.gauss(0, 1)
+            self.next_breath = self.hold[1]
+        elif now >= self.next_breath:
+            flex = 1
+            self.next_breath = now + random.uniform(3.6, 4.4)  # about 15 breaths/min
 
         return {
             "type": "sample",
             "t": round(now, 3),
-            "gsr": round(self.gsr, 1),
             "hr": round(hr, 1),
-            "flex": round(flex, 1),
-            "breath_rate": 15,
+            "flex": flex,
             # Varies a little like a real blink rate: a perfectly flat signal would read as
             # "exactly like baseline" and pull every verdict toward calm.
             "blink_rate": round(17 + 2 * math.sin(elapsed / 11) + random.gauss(0, 0.8), 1),
@@ -250,7 +255,7 @@ class Session:
 
     def score(self, q: dict, now: float) -> dict:
         """Physiology part of the response. The voice part is added by finish_answer()."""
-        lo = q["t"] - scoring.PRE_S - scoring.HOLD_RANGE_S
+        lo = q["t"] - scoring.PRE_S
         hi = q["t"] + scoring.WINDOW_S
         window = [s for s in self.samples if lo <= s["t"] <= hi]
         q["spike"], q["signals"] = scoring.response(window, q["t"], self.baseline)
@@ -294,16 +299,10 @@ class Session:
         return voice.analyze_answer(q["end"] if marked else q["t"], until, marked, self.speech_floor())
 
     def finish_answer(self, q: dict, result: dict | None, t: float) -> dict | None:
-        """Stores the answer's voice features (adding vocal tension from the samples) and logs them."""
+        """Stores the answer's voice features and logs them."""
         if not result:
             return None
         answer = {k: v for k, v in result.items() if k not in ("onset", "offset")}
-        if result["onset"] is not None:
-            tension = [s["vocal_tension"] for s in self.samples
-                       if result["onset"] <= s["t"] <= result["offset"] and s.get("vocal_tension") is not None]
-            answer["tension"] = round(float(sum(tension) / len(tension)), 2) if tension else None
-        else:
-            answer["tension"] = None
         q["voice"] = answer
         self.log.event(t, "answer", label=q["label"], **{f"answer_{k}": answer.get(k) for k in ANSWER_KEYS})
         return answer
@@ -367,9 +366,6 @@ class Session:
             if raw is not None:
                 self.stress = raw if self.stress is None else self.stress + STRESS_SMOOTHING * (raw - self.stress)
                 sample["stress"] = round(self.stress)
-            if self.voice_done:
-                tension = scoring.vocal_tension(sample, self.baseline)
-                sample["vocal_tension"] = None if tension is None else round(tension, 2)
 
         self.verdict_engine()  # builds it the moment both baselines are done
         scored = False
@@ -446,8 +442,8 @@ def status_message() -> dict:
         "type": "status",
         "components": {
             "arduino": arduino,
-            "gsr": sensor_status("gsr"),
-            "pulse": sensor_status("hr", "spo2", "temp"),
+            "gsr": "simulated",  # see SimulatedGSR
+            "pulse": sensor_status("hr"),
             "breathing": sensor_status("flex"),
             "camera": camera.status,
             # Fake mode sends a fake blink_rate when the real face tracker isn't running.
@@ -484,12 +480,14 @@ async def broadcast(message: dict) -> None:
 
 
 breath_history: deque[tuple[float, float]] = deque()  # (t, flex) for breathing rate
+simulated_gsr = SimulatedGSR()
 serial_reader: SerialReader | None = None
 last_seen: dict[str, float] = {}  # sample field -> laptop time it last had a value
 
 
 async def handle_sample(sample: dict) -> None:
     """Every sample, fake or real, goes through here: breathing rate, session, broadcast."""
+    sample["gsr"] = simulated_gsr.next()
     if sample.get("breath_rate") is None and sample.get("flex") is not None:
         breath_history.append((sample["t"], sample["flex"]))
         while breath_history[0][0] < sample["t"] - BREATH_WINDOW_S:
@@ -503,7 +501,7 @@ async def handle_sample(sample: dict) -> None:
     if features:
         sample.update({k: None if v is None else round(v, 2) for k, v in features.items()})
     now = time.time()
-    for key in ("gsr", "hr", "spo2", "temp", "flex", *FACE_KEYS):
+    for key in ("hr", "flex", *FACE_KEYS):
         if sample.get(key) is not None:
             last_seen[key] = now
     current = session

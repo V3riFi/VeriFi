@@ -55,8 +55,8 @@ NULL_EDGES = tuple(np.round(np.arange(-4.0, 4.01, 0.5), 2))  # histogram bins of
 NULL_TIE_SD = 0.05      # z values this close to a calm moment count as equal to it
 TRACE_S = 10.0          # trace slice: this many seconds either side of the question
 TRACE_STEP_S = 0.25     # trace resolution
-TRACE_KEYS = (("gsr", "Skin conductance", "raw"), ("hr", "Heart rate", "bpm"),
-              ("flex", "Breathing belt", "raw"), ("blink_rate", "Blink rate", "per min"),
+TRACE_KEYS = (("hr", "Heart rate", "bpm"),
+              ("breath_rate", "Breathing rate", "per min"), ("blink_rate", "Blink rate", "per min"),
               ("pitch", "Voice pitch", "Hz"))
 
 _LOG_NORM = 0.5 * math.log(2 * math.pi)
@@ -163,19 +163,6 @@ def _gates(engine: Engine | None, raw: dict | None, samples: list[dict], q_t: fl
     gates.append({"key": "baseline", "label": "Calm baseline recorded", "pass": ok,
                   "detail": "Baseline analyzed" if ok else "No usable baseline to compare with"})
 
-    gsr = [s.get("gsr") for s in samples if q_t - scoring.PRE_S <= s["t"] <= until and s.get("gsr") is not None]
-    skin = raw is not None and "Skin" in raw["categories"]
-    if not gsr:
-        detail, ok = "No skin conductance data", False
-    elif max(gsr) <= 0:
-        detail, ok = "Skin sensor reads 0: it is not touching the skin", False
-    elif not skin:
-        reasons = [why for cat, _, why in (raw or {}).get("skipped", []) if cat == "Skin"]
-        detail, ok = (f"Skin conductance: {reasons[0]}" if reasons else "Skin conductance unusable"), False
-    else:
-        detail, ok = "Skin conductance measured", True
-    gates.append({"key": "skin", "label": "Skin sensor reading", "pass": ok, "detail": detail})
-
     share, gap = _coverage(samples, q_t, until)
     if provisional:
         ok, detail = gap <= MAX_GAP_S, f"Longest gap {gap:.1f} s so far"
@@ -213,11 +200,8 @@ def _trace(samples: list[dict], q_t: float, q_end: float | None, until: float) -
                 points.append([round(float(t[bins == b].mean()), 2), round(float(x[sel].mean()), 3)])
         if points:
             series[key] = {"label": label, "unit": unit, "points": points}
-    anchor = (q_end if q_end is not None else q_t) - q_t
-    lo, hi = confidence.CATEGORIES["Skin"]["sensors"][0]["phasic"]
     windows = [
         {"key": "pre", "label": "Reference: just before the question", "from": -scoring.PRE_S, "to": 0.0},
-        {"key": "peak", "label": "Skin reaction window", "from": lo, "to": round(min(anchor + hi, until - q_t), 2)},
         {"key": "answer", "label": "Answer window", "from": 0.0, "to": round(until - q_t, 2)},
     ]
     if q_end is not None:

@@ -14,7 +14,7 @@ import sys
 import websockets
 
 URL = "ws://localhost:8000/ws"
-FIELDS = ["gsr", "hr", "flex", "breath_rate", "temp", "spo2", "blink_rate", "stress"]
+FIELDS = ["gsr", "hr", "flex", "breath_rate", "blink_rate", "stress"]
 
 
 def fmt(v) -> str:

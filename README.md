@@ -71,11 +71,11 @@ It uses the real Arduino, camera and mic. `python3 run.py --fake-body` replaces 
 
 | Signal | Source | What we look at |
 |---|---|---|
-| Skin conductance | Grove GSR | Sweat response in the seconds after each question |
-| Heart rate | Pulse / SpO2 (finger) | Change from baseline |
-| Breathing | Flex sensor on chest belt | Rate, breath holding |
+| Skin conductance | Grove GSR | **Simulated.** The sensor reads too steadily to use, so the dashboard shows a flat value at a real session's average. No weight in any score |
+| Heart rate | BioAmp ECG | Change from baseline |
+| Breathing | BioAmp EMG on the chest | One pulse per breath: rate, breath holding |
 | Face | Webcam + MediaPipe Face Landmarker (`openCV/vision`) | Blink rate (Eye Aspect Ratio), hand over face, lip compression. Blinks ignored if head turned >35° or tilted >25° — keep camera at eye level |
-| Voice | Laptop mic + Parselmouth (`voice/live.py`) | Live: pitch, HNR (voice clarity), jitter, shimmer, loudness, spectral slope and vocal tension. Per answer: response latency, length, speech rate, pauses, pitch, intonation (pitch SD), HNR, tension. Shown in the dashboard's Voice dropdown, not part of stress. Speech errors, repetitions and stuttering need a transcript, which VeriFi doesn't make |
+| Voice | Laptop mic + Parselmouth (`voice/live.py`) | Live: pitch, HNR (voice clarity), jitter, shimmer, loudness, and spectral slope. Per answer: response latency, length, speech rate, pauses, pitch, intonation (pitch SD), HNR. Shown in the dashboard's Voice dropdown, not part of stress. Speech errors, repetitions and stuttering need a transcript, which VeriFi doesn't make |
 
 ---
 
@@ -83,8 +83,8 @@ It uses the real Arduino, camera and mic. `python3 run.py --fake-body` replaces 
 
 ```text
    ┌─────────────────────┐  ┌──────────┐  ┌──────────┐
-   │ GSR · Pulse · SpO2  │  │ Webcam   │  │ Mic      │
-   │ Flex · Button       │  │          │  │          │
+   │ ECG · EMG · GSR     │  │ Webcam   │  │ Mic      │
+   │ Button              │  │          │  │          │
    └──────────┬──────────┘  └────┬─────┘  └────┬─────┘
               │                  │             │
    ┌──────────▼──────────┐       │             │
@@ -266,29 +266,29 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 ### Backend → frontend
 
 ```json
-{"type": "sample",   "t": 1234.5, "gsr": 512, "hr": 74, "flex": 330, "breath_rate": 14, "temp": 31.5, "spo2": 98, "blink_rate": 18, "pitch": 182.4, "jitter": 1.1, "shimmer": 6.3, "voice_db": 61.0, "hnr": 14.2, "spectral_slope": -18.5, "vocal_tension": 0.6, "stress": 41}
+{"type": "sample",   "t": 1234.5, "gsr": 17.4, "hr": 74, "flex": 0, "breath_rate": 14, "blink_rate": 18, "pitch": 182.4, "jitter": 1.1, "shimmer": 6.3, "voice_db": 61.0, "hnr": 14.2, "spectral_slope": -18.5, "stress": 41}
 {"type": "baseline", "t": 1180.0, "phase": "start", "duration": 60}
-{"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 451.2, "hr": 72.4}, "std": {"gsr": 3.1, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
+{"type": "baseline", "t": 1240.0, "phase": "done", "mean": {"gsr": 17.4, "hr": 72.4}, "std": {"gsr": 1.0, "hr": 1.8}, "alert_sd": 2, "stress_alert": 25}
 {"type": "voice_baseline", "t": 1240.0, "phase": "start", "duration": 25, "sentences": ["I am sitting in a chair right now.", "..."]}
-{"type": "voice_baseline", "t": 1265.0, "phase": "done", "voiced_samples": 140, "mean": {"gsr": 451.2, "pitch": 182.0}, "std": {"gsr": 3.1, "pitch": 9.0}, "alert_sd": 2, "stress_alert": 25, "reading": {"duration_s": 22.1, "speech_rate": 3.1, "pauses": 4, "pitch": 181.0, "intonation": 24.0, "hnr": 15.2}}
+{"type": "voice_baseline", "t": 1265.0, "phase": "done", "voiced_samples": 140, "mean": {"gsr": 17.4, "pitch": 182.0}, "std": {"gsr": 1.0, "pitch": 9.0}, "alert_sd": 2, "stress_alert": 25, "reading": {"duration_s": 22.1, "speech_rate": 3.1, "pauses": 4, "pitch": 181.0, "intonation": 24.0, "hnr": 15.2}}
 {"type": "question", "t": 1250.0, "label": "Q3", "text": "Where were you on Tuesday night?", "due": 1260.0, "phase": "start"}
 {"type": "question", "t": 1252.4, "label": "Q3", "due": 1262.4, "phase": "end"}
-{"type": "verdict_progress", "t": 1255.1, "label": "Q3", "elapsed": 5.1, "due": 1262.4, "verdict": {"provisional": true, "band": "elevated", "likelihood": 0.71, "interval": [0.44, 0.9], "z": 1.82, "categories": [{"name": "Skin", "weight": 0.3, "z": 2.9, "contribution": 1.71, "suspicion": 0.998}], "gates": [{"key": "skin", "label": "Skin sensor reading", "pass": true, "detail": "Skin conductance measured"}]}}
-{"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"gsr": 2.4, "hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}, "voice": {"latency_s": 1.4, "latency_marked": true, "duration_s": 2.2, "speech_rate": 3.6, "pauses": 1, "pause_s": 0.5, "pitch": 190.2, "intonation": 18.0, "hnr": 13.1, "tension": 0.9, "cut": false}, "verdict": {"provisional": false, "band": "elevated", "result": "reaction", "likelihood": 0.78, "interval": [0.52, 0.93], "reason": null, "z": 1.94, "z_eff": 1.94, "log_lr": 1.27, "norm": 0.47, "model": {"lambda": 2.0, "sigma": 1.0, "prior": 0.5, "interval_z": 1.2816}, "categories": ["..."], "gates": ["..."], "null_total": {"n": 48, "mean": 0.1, "sd": 1.0, "edges": ["..."], "counts": ["..."], "percentile": 0.96}, "trace": {"from": -10, "to": 10, "series": {"gsr": {"label": "Skin conductance", "unit": "raw", "points": [[-9.9, 451.2], "..."]}}, "windows": ["..."], "end": 2.4}}}
+{"type": "verdict_progress", "t": 1255.1, "label": "Q3", "elapsed": 5.1, "due": 1262.4, "verdict": {"provisional": true, "band": "elevated", "likelihood": 0.71, "interval": [0.44, 0.9], "z": 1.82, "categories": [{"name": "Cardiac", "weight": 0.15, "z": 2.9, "contribution": 1.1, "suspicion": 0.998}], "gates": [{"key": "coverage", "label": "Sensors kept streaming", "pass": true, "detail": "Longest gap 0.1 s so far"}]}}
+{"type": "response", "t": 1260.0, "label": "Q3", "spike": 2.1, "signals": {"hr": 1.1, "breath_hold_s": 2.6, "blink": -0.8}, "voice": {"latency_s": 1.4, "latency_marked": true, "duration_s": 2.2, "speech_rate": 3.6, "pauses": 1, "pause_s": 0.5, "pitch": 190.2, "intonation": 18.0, "hnr": 13.1, "cut": false}, "verdict": {"provisional": false, "band": "elevated", "result": "reaction", "likelihood": 0.78, "interval": [0.52, 0.93], "reason": null, "z": 1.94, "z_eff": 1.94, "log_lr": 1.27, "norm": 0.47, "model": {"lambda": 2.0, "sigma": 1.0, "prior": 0.5, "interval_z": 1.2816}, "categories": ["..."], "gates": ["..."], "null_total": {"n": 48, "mean": 0.1, "sd": 1.0, "edges": ["..."], "counts": ["..."], "percentile": 0.96}, "trace": {"from": -10, "to": 10, "series": {"hr": {"label": "Heart rate", "unit": "bpm", "points": [[-9.9, 72.1], "..."]}}, "windows": ["..."], "end": 2.4}}}
 {"type": "session_verdict", "t": 1262.4, "likelihood": 0.64, "interval": [0.35, 0.86], "band": "elevated", "log_lr": 0.58, "z": 1.1, "answers": 3, "counts": {"high": 0, "elevated": 1, "unclear": 1, "low": 1, "insufficient": 0}, "history": [{"label": "Q1", "band": "low", "log_lr": -1.3, "cum_log_lr": -1.3, "likelihood": 0.21, "interval": [0.11, 0.55]}, "..."]}
 {"type": "summary",  "questions": [{"label": "Q3", "spike": 2.1, "latency_s": 1.4, "suspicion": 0.97}, {"label": "Q1", "spike": 0.4, "latency_s": 0.8, "suspicion": 0.31}]}
-{"type": "status",   "components": {"arduino": "ok", "gsr": "ok", "pulse": "missing", "breathing": "ok", "camera": "ok", "face": "ok", "voice": "off"}, "session": null}
+{"type": "status",   "components": {"arduino": "ok", "gsr": "simulated", "pulse": "missing", "breathing": "ok", "camera": "ok", "face": "ok", "voice": "off"}, "session": null}
 {"type": "frame",    "t": 1250.1, "jpeg": "<base64 JPEG>"}
 ```
 
 | Type | Notes |
 |---|---|
-| `sample` | ~10/sec from Arduino. `t` = laptop Unix time (s). `stress` is 0–100 and appears only after baseline. **Any field may be `null` or missing** — draw a gap, don't crash. `hr`/`spo2`/`temp` are null until the pulse sensor locks (~4 s); `breath_rate` until ~15 s; `blink_rate` for the first 10 s of face tracking and whenever no face is visible. `hand_on_face` is boolean. Voice fields (`pitch`, `jitter`, `shimmer`, `hnr`, `spectral_slope`, `vocal_tension`) are null when nobody talks; `voice_db` (loudness) always has a value; all are missing if the mic is off. `hnr` and `spectral_slope` are in dB and can be negative. `vocal_tension` is SDs above the voice baseline (average of loudness, jitter, shimmer and a steeper spectral slope), after the voice baseline only. `hr` updates in ~4 s steps. `temp` in °C, `spo2` in %. |
+| `sample` | ~10/sec from Arduino. `t` = laptop Unix time (s). `stress` is 0–100 and appears only after baseline. **Any field may be `null` or missing** — draw a gap, don't crash. `hr` is null until the heartbeat locks; `gsr` is simulated; `flex` is 1 on the sample where a breath starts and 0 otherwise; `breath_rate` until ~15 s; `blink_rate` for the first 10 s of face tracking and whenever no face is visible. `hand_on_face` is boolean. Voice fields (`pitch`, `jitter`, `shimmer`, `hnr`, `spectral_slope`) are null when nobody talks; `voice_db` (loudness) always has a value; all are missing if the mic is off. `hnr` and `spectral_slope` are in dB and can be negative. `hr` updates in ~4 s steps. `temp` in °C, `spo2` in %. |
 | `baseline` | `start` carries the baseline length; `done` carries each signal's `mean`/`std`, plus `alert_sd` and `stress_alert` (the dashboard uses these to draw baseline bands and turn lines red outside them). |
 | `voice_baseline` | Subject reads `sentences` aloud for `duration` s (`VERIFI_VOICE_BASELINE_S`, default 25; `0` skips). `done` carries the baseline again, now with the voice fields (from moments the subject is speaking), plus `reading`: the reading's per-answer features, to compare answers with (`null` if it couldn't be measured). Questions are refused until it's done. Skipped entirely if the mic is broken; if it hears too little speech, an `error` follows and voice has no normal range. The silent baseline also measures room loudness — afterward `pitch`/`jitter`/`shimmer` only count when the voice is ≥6 dB above the room. |
 | `question` | Timestamped echo: `phase` `start` (the dashboard places a marker) or `end` (Done asking). `start` also carries the question's `text` (`null` if none was typed). Both carry `due`: when the response will be sent (Done asking moves it to 10 s after). |
 | `verdict_progress` | Every ~0.3 s while an answer's window is open: a provisional `verdict` (`provisional: true`) on the window so far, so the dashboard's gauge moves as the reaction builds. Lighter than the final one: no `signals`, `null`, `null_total` or `trace`. `elapsed` = seconds since Ask. |
-| `response` | Sent ~10 s after a question starts, or 10 s after Done asking if that's later. `voice` holds the answer's voice features (`null` without a mic): `latency_s` (Done asking, or the estimated end of the question when `latency_marked` is false, to the first word), `duration_s` (first to last word), `speech_rate` (syllables/s), `pauses` and `pause_s` (silences of 0.3 s or more), `pitch` (Hz), `intonation` (pitch SD, Hz), `hnr` (dB), `tension` (SD), `cut` (still talking when the window closed). Fields are `null` when no answer was heard. `spike` = overall response in SD above baseline; `signals` breaks it down per signal (SD, except `breath_hold_s` in seconds). `confidence` (`backend/confidence.py`, `null` if it couldn't be scored): `suspicion` 0-1 overall, and `categories`, a list of `{name, weight, suspicion, signals, missing}` (each signal: `key`, `name`, `weight`, `direction` +1/-1/0, `phasic`, `base`, `now`, `z`, `suspicion`; `missing` says why a category or signal had no data). Suspicion is how far the answer departs from the baseline (1 - the chance of a departure this big if nothing changed); the dashboard's Question summary shows it. `verdict` (`backend/verdict.py`, `null` if it couldn't be scored) is the answer's deception likelihood: `likelihood` 0-1 (`null` when a quality gate failed), `interval` its 80% range, `band` `low`/`unclear`/`elevated`/`high`/`insufficient`, `reason` why not when insufficient, and `result` (`calm`/`unclear`/`reaction`/`insufficient`, kept for compatibility). For the "Why this reading" breakdown: `z` (combined score), `z_eff`, `log_lr`, `norm` (√Σw²), `model`; `categories`, one per signal group: `name`, `weight`, `z`, `contribution` (w·z/√Σw²; they add up to `z`), `suspicion`, `method`, `missing`, `signals` (raw values per cue: `base`/`base_sd`, `now`/`now_sd`, `z`, `p`, `direction`, `phasic`) and `null` (pseudo-questions across the calm baseline: `n`, `mean`, `sd`, histogram `edges`/`counts`, and this answer's `percentile`); `null_total` the same for `z`; `gates` (`key`, `label`, `pass`, `detail`); `trace` (raw signals from −10 to +10 s around Ask, `points` as [seconds from Ask, value], plus the measurement `windows` and `end` = Done asking). |
+| `response` | Sent ~10 s after a question starts, or 10 s after Done asking if that's later. `voice` holds the answer's voice features (`null` without a mic): `latency_s` (Done asking, or the estimated end of the question when `latency_marked` is false, to the first word), `duration_s` (first to last word), `speech_rate` (syllables/s), `pauses` and `pause_s` (silences of 0.3 s or more), `pitch` (Hz), `intonation` (pitch SD, Hz), `hnr` (dB), `cut` (still talking when the window closed). Fields are `null` when no answer was heard. `spike` = overall response in SD above baseline; `signals` breaks it down per signal (SD, except `breath_hold_s` in seconds). `confidence` (`backend/confidence.py`, `null` if it couldn't be scored): `suspicion` 0-1 overall, and `categories`, a list of `{name, weight, suspicion, signals, missing}` (each signal: `key`, `name`, `weight`, `direction` +1/-1/0, `phasic`, `base`, `now`, `z`, `suspicion`; `missing` says why a category or signal had no data). Suspicion is how far the answer departs from the baseline (1 - the chance of a departure this big if nothing changed); the dashboard's Question summary shows it. `verdict` (`backend/verdict.py`, `null` if it couldn't be scored) is the answer's deception likelihood: `likelihood` 0-1 (`null` when a quality gate failed), `interval` its 80% range, `band` `low`/`unclear`/`elevated`/`high`/`insufficient`, `reason` why not when insufficient, and `result` (`calm`/`unclear`/`reaction`/`insufficient`, kept for compatibility). For the "Why this reading" breakdown: `z` (combined score), `z_eff`, `log_lr`, `norm` (√Σw²), `model`; `categories`, one per signal group: `name`, `weight`, `z`, `contribution` (w·z/√Σw²; they add up to `z`), `suspicion`, `method`, `missing`, `signals` (raw values per cue: `base`/`base_sd`, `now`/`now_sd`, `z`, `p`, `direction`, `phasic`) and `null` (pseudo-questions across the calm baseline: `n`, `mean`, `sd`, histogram `edges`/`counts`, and this answer's `percentile`); `null_total` the same for `z`; `gates` (`key`, `label`, `pass`, `detail`); `trace` (raw signals from −10 to +10 s around Ask, `points` as [seconds from Ask, value], plus the measurement `windows` and `end` = Done asking). |
 | `session_verdict` | After every `response`: all scored answers so far, re-combined. `likelihood`, `interval`, `band` as in a verdict, `log_lr` (sum over answers), `z` (Stouffer over the answers' scores), `answers` (how many added evidence), `counts` per band, and `history`: the session likelihood after each answer. |
 | `summary` | Sent on `stop`. Every question, highest spike first, with its `latency_s`, overall `suspicion` (see `confidence` in `response`), `likelihood` and `band`; `session` is the final `session_verdict`. |
 | `status` | ~1/sec and on connect. Each component is `ok`, `missing`, or `off`. `session` describes the running session (or `null`) so a reloaded dashboard can reattach: its questions carry `text`, `due` and `verdict`, and `session.verdict` is the latest `session_verdict`. |
@@ -297,17 +297,17 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 ### Scoring (`backend/scoring.py`)
 
 - **Baseline:** the ~60 s calm period at the start. Its mean and std per signal are the reference for everything after.
-- **Question response:** for each signal, peak in the ~10 s window after the question minus the mean of the 2 s before, divided by that signal's baseline std. `spike` combines these, weighted toward GSR.
-- **Live `stress`:** smoothed, weighted combination of how far each signal is from baseline, scaled 0–100. Weights favour GSR (0.5) and heart rate (0.3), then blink rate and lip compression. GSR and heart rate count only when above baseline; blink counts either way. **Breathing rate is excluded on purpose** — talking changes it, which would spike stress every answer (breath holds still count in each question's `spike`). Outliers above 1 SD get their weight multiplied by their distance. `stress_alert` (25) corresponds to 2 SD.
+- **Question response:** for each signal, peak in the ~10 s window after the question minus the mean of the 2 s before, divided by that signal's baseline std. `spike` combines these, weighted toward heart rate.
+- **Live `stress`:** smoothed, weighted combination of how far each signal is from baseline, scaled 0–100. Weights favour heart rate (0.3), then blink rate (0.13) and lip compression (0.07); GSR has no weight. Heart rate counts only when above baseline; blink counts either way. **Breathing rate is excluded on purpose** — talking changes it, which would spike stress every answer (breath holds still count in each question's `spike`). Outliers above 1 SD get their weight multiplied by their distance. `stress_alert` (25) corresponds to 2 SD.
 
 ### Per-answer verdict (`backend/verdict.py` on top of `backend/confidence.py`)
 
 Every answer is scored on its own the moment its window closes (`due`), and a live estimate streams while it is open. The dashboard shows a **deception likelihood**, never "truth" or "lie": it measures arousal against this person's own calm baseline, not lying itself.
 
-1. **Score.** `backend/confidence.py` compares the answer with the baseline per signal and combines the signal groups (Skin, Breathing, Cardiac, Voice, Blink, Lip / hand) into one score `z` with weighted Stouffer. With no change from baseline, `z` behaves like a standard normal.
+1. **Score.** `backend/confidence.py` compares the answer with the baseline per signal and combines the signal groups (Breathing, Cardiac, Voice, Blink, Lip / hand) into one score `z` with weighted Stouffer. With no change from baseline, `z` behaves like a standard normal.
 2. **Likelihood.** `LR = N(z; λ, 1+σ²) / N(z; 0, 1)` and `P = prior·LR / (prior·LR + 1 − prior)`. Below `z = −λ/σ²` the ratio would rise again, so a very calm answer would read as suspicious; `z` is floored there. The 80% range is `P` at `z ± 1.28`.
 3. **Bands.** Low < 30% ≤ Unclear < 60% ≤ Elevated < 85% ≤ High.
-4. **Quality gates.** Baseline analyzed; GSR present and not stuck at 0; the window ≥ 80% covered with no gap over 2 s; at least 2 weighted signal groups usable. If one fails the answer shows **Not enough signal** with the reason. Gates never change a score.
+4. **Quality gates.** Baseline analyzed; the window ≥ 80% covered with no gap over 2 s; at least 2 weighted signal groups usable. If one fails the answer shows **Not enough signal** with the reason. Gates never change a score.
 5. **Session.** After every answer, all scored answers' log LRs are added up (one shared state for the session) into the session likelihood.
 6. **Why this reading.** Each group's contribution `w·z/√Σw²` adds up exactly to `z` (the waterfall). Pseudo-questions every second across the silent baseline give each group's calm-moment distribution (the histograms).
 
@@ -336,10 +336,9 @@ Constants to tune on real sessions (all in `backend/verdict.py`): `LAMBDA` 2.0, 
 
 | Part | Pins |
 |---|---|
-| Grove GSR | Red → 5V, Black → GND, Yellow → A0, White → not connected |
-| Flex sensor (breathing belt) | 5V → flex → **A1** → resistor → GND (resistor ≈ flex's flat resistance) |
-| BioAMP EXG Pill (optional) | VCC → 5V, GND → GND, OUT → A2 |
-| Pulse / SpO2 (DFRobot MAX30102, I²C 0x57) | SDA → A4, SCL → A5, plus power and GND |
+| Grove GSR | Red → 5V, Black → GND, Yellow → A1, White → not connected |
+| BioAmp ECG (heart rate) | VCC → 5V, GND → GND, OUT → A0 |
+| BioAmp EMG (breathing) | VCC → 5V, GND → GND, OUT → A2 |
 | Question button (interrogator) | D2 → GND (internal pullup, no resistor needed) |
 
 ### Serial protocol
@@ -348,23 +347,17 @@ Constants to tune on real sessions (all in `backend/verdict.py`): `LAMBDA` 2.0, 
 
 ```
 STATUS: starting
-STATUS: MAX30102 ready
-breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
-```
-
-The current BioAmp ECG/EMG sketch ends each line with `raw_ecg` and `raw_emg` instead of `spo2` and `temp`; both formats are accepted:
-
-```
-breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
+breath: 0, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
 ```
 
 | Field | Meaning |
 |---|---|
-| `breath` | Flex sensor raw ADC (0–1023). The backend calls it `flex` and derives `breath_rate` |
-| `gsr` | Skin conductance raw ADC (0–1023) |
-| `heartbeat` | BPM from the pulse module, recalculated ~every 4 s (board polls 1/sec, averages last 2). `0` = no reading yet |
-| `spo2` | Blood oxygen (%). Older sketches label it `Blood Pressure:` — still accepted |
-| `temp` | °C from the pulse module chip |
+| `breath` | `1` on the line where a breath starts, `0` on every other line: each 1 is one breath. The backend calls it `flex` and derives `breath_rate` |
+| `gsr` | Skin conductance raw ADC (0–1023). Read but not used: the dashboard shows a simulated value (see Scoring) |
+| `heartbeat` | BPM from the ECG. `0` = no reading yet |
+| `raw_ecg`, `raw_emg` | Raw ADC values for debugging; the backend ignores them |
+
+Lines from older sketches ending in `spo2:` and `temp:` still parse; those two values are ignored.
 
 `STATUS:` lines print in the backend terminal and are otherwise ignored. **If you change the line format, update `LINE_RE` in `backend/serial_io.py` in the same commit.**
 
@@ -388,7 +381,7 @@ breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
 ## Limitations
 
 - **Physiological responses show stress and arousal, not lying.** An innocent person can spike on an emotional or accusatory question; a calm liar may not spike at all. VeriFi flags reactions for follow-up — never a verdict.
-- **Talking affects the signals.** Speaking changes breathing and nudges heart rate, so breathing data during an answer is unreliable. Short answers (yes/no, a few words) give cleaner results; GSR, which lags a few seconds anyway, is the most trustworthy signal.
+- **Talking affects the signals.** Speaking changes breathing and nudges heart rate, so breathing data during an answer is unreliable. Short answers (yes/no, a few words) give cleaner results.
 - **Compare within one session, not across people.** Everything is relative to that person's own baseline.
 - Small test set, collected during a weekend hackathon.
 - **Prototype only.** Not for real investigations, hiring, or any decision about a person.

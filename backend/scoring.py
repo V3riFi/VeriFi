@@ -18,19 +18,19 @@ MIN_STD = {
     # breath_rate and blink_rate swing a lot naturally (talking, looking around);
     # a tight floor made the dashboard flag normal variation as a reaction.
     "gsr": 1.0, "hr": 1.0, "flex": 1.0, "breath_rate": 2.0, "blink_rate": 3.0, "lip_compression": 0.05,
-    "spo2": 0.5, "temp": 0.1,  # baseline only (drawn on the dashboard), not part of stress
     # Voice: only present while the subject talks, so it gets its own baseline from the
     # voice phase (subject reads VOICE_SENTENCES) instead of the silent one. Drawn on
-    # the dashboard and used for vocal tension, not part of stress or spike.
+    # the dashboard, not part of stress or spike.
     "pitch": 5.0, "jitter": 0.2, "shimmer": 0.5, "voice_db": 2.0, "hnr": 1.0, "spectral_slope": 1.0,
 }
 VOICE_KEYS = ("pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope")
 SENSOR_KEYS = tuple(k for k in MIN_STD if k not in VOICE_KEYS)
 MIN_VOICE_SAMPLES = 20  # voiced samples needed for a voice baseline (~2 s of speech at 10 Hz)
 
-# spike = weighted mix of per-signal responses, weighted toward GSR.
+# spike = weighted mix of per-signal responses, weighted toward heart rate.
+# GSR has no weight: the dashboard's GSR is simulated (server.SimulatedGSR).
 # Missing signals are skipped and the remaining weights rescaled.
-SPIKE_WEIGHTS = {"gsr": 0.6, "hr": 0.25, "breath_hold": 0.15}
+SPIKE_WEIGHTS = {"hr": 0.25, "breath_hold": 0.15}
 
 # Live stress: every signal's distance from baseline in SDs, mixed by how much
 # we trust each signal (STRESS_WEIGHTS). A signal that is an outlier right now
@@ -38,58 +38,47 @@ SPIKE_WEIGHTS = {"gsr": 0.6, "hr": 0.25, "breath_hold": 0.15}
 # passes 1 SD, so one strongly reacting signal isn't averaged away by quiet ones.
 # STRESS_FULL_SCALE_SD maps to 100.
 # breath_rate is NOT in stress: answering out loud changes breathing, and with it
-# in, talking alone pushed stress to ~94 with GSR and heart rate flat. Breath
+# in, talking alone pushed stress to ~94 with heart rate flat. Breath
 # holds still count, per question, in the spike score (SPIKE_WEIGHTS).
-STRESS_WEIGHTS = {"gsr": 0.5, "hr": 0.3, "blink_rate": 0.13, "lip_compression": 0.07}
-# GSR and heart rate only count when above baseline. These count a change either way.
+STRESS_WEIGHTS = {"hr": 0.3, "blink_rate": 0.13, "lip_compression": 0.07}
+# Heart rate only counts when above baseline. These count a change either way.
 STRESS_TWO_SIDED = {"blink_rate"}
 STRESS_WINDOW_S = 2.0
-STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data: GSR creeps up over a session
+STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data
 
 # A signal (or the combined stress) is flagged once it is ALERT_SD above baseline.
 ALERT_SD = 2.0
 STRESS_ALERT = round(ALERT_SD / STRESS_FULL_SCALE_SD * 100)
 
-# Breath hold: chest movement (flex range over HOLD_RANGE_S) below
-# HOLD_FRACTION of the baseline's typical range. The first NORMAL_PAUSE_S of a
-# hold is normal breathing; each second beyond counts as 1 SD in spike.
-HOLD_RANGE_S = 1.5
-HOLD_FRACTION = 0.3
-NORMAL_PAUSE_S = 1.0
-
-
-MIN_BREATH_WINDOW_S = 15.0  # need this much flex history before reporting a breathing rate
-MIN_BREATH_SWING = 2.0      # ADC units; smaller wiggles are noise, not breaths
+# Breathing arrives as pulses: flex is 1 on the sample where a breath starts, else 0.
+# Breath hold: the longest gap between breaths in the answer window. A gap up to
+# HOLD_TOLERANCE typical breaths is normal; each second beyond counts as 1 SD in spike.
+HOLD_TOLERANCE = 1.5
+MIN_BREATH_WINDOW_S = 15.0  # need this much history before reporting a breathing rate
 
 
 def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | None:
     """Breaths per minute from (t, flex) pairs covering the last window_s seconds.
 
-    Removes slow drift (the belt shifting), then counts upward crossings with a
-    dead band so noise doesn't count as breaths. None until there's enough data
-    or if fewer than 2 breaths were seen (e.g. a long hold).
+    Every flex value of 1 is one breath. None until there's enough data or with fewer
+    than 2 breaths. The rate falls during a hold: once the next breath is overdue, the
+    time since the last one counts.
     """
     if len(history) < 10 or history[-1][0] - history[0][0] < MIN_BREATH_WINDOW_S:
         return None
     t = np.array([h[0] for h in history])
     x = np.array([h[1] for h in history])
-    x = x - np.polyval(np.polyfit(t - t[0], x, 1), t - t[0])
-    band = max(0.3 * float(x.std()), MIN_BREATH_SWING)
-    rises, state = [], None
-    for ti, xi in zip(t, x):
-        if xi > band and state != "high":
-            if state == "low":
-                rises.append(ti)
-            state = "high"
-        elif xi < -band:
-            state = "low"
-    if len(rises) < 2:
+    breaths = t[x == 1]
+    if len(breaths) < 2:
         return None
-    return round(float((len(rises) - 1) / (rises[-1] - rises[0]) * 60), 1)
+    span = breaths[-1] - breaths[0]
+    interval = span / (len(breaths) - 1)
+    elapsed = max(span, t[-1] - breaths[0] - interval)
+    return round(float((len(breaths) - 1) / elapsed * 60), 1)
 
 
 # Signals that are negative for real. For every other one, a negative value is a sensor's "no reading".
-SIGNED = {"hnr", "spectral_slope", "vocal_tension"}
+SIGNED = {"hnr", "spectral_slope"}
 
 
 def column(samples: list[dict], key: str) -> np.ndarray:
@@ -104,20 +93,6 @@ def column(samples: list[dict], key: str) -> np.ndarray:
     return out
 
 
-def rolling_range(t: np.ndarray, x: np.ndarray, span_s: float) -> np.ndarray:
-    """For each sample, max - min of x over the previous span_s seconds."""
-    out = np.full(len(x), np.nan)
-    start = 0
-    for i in range(len(x)):
-        while t[start] < t[i] - span_s:
-            start += 1
-        window = x[start : i + 1]
-        window = window[~np.isnan(window)]
-        if len(window) >= 2:
-            out[i] = window.max() - window.min()
-    return out
-
-
 class Baseline:
     """Mean and std per signal over the calm period at the start of a session."""
 
@@ -126,9 +101,8 @@ class Baseline:
         self.std: dict[str, float] = {}
         self.add(samples, keys)
         t = column(samples, "t")
-        ranges = rolling_range(t, column(samples, "flex"), HOLD_RANGE_S)
-        ranges = ranges[~np.isnan(ranges)]
-        self.breath_range = float(np.median(ranges)) if len(ranges) else None
+        breaths = t[column(samples, "flex") == 1]
+        self.breath_interval = float(np.median(np.diff(breaths))) if len(breaths) >= 2 else None
 
     def add(self, samples: list[dict], keys: tuple[str, ...], min_count: int = 2) -> int:
         """Adds (or replaces) these signals' mean and std from samples. Returns the fewest values any key had."""
@@ -192,40 +166,13 @@ def stress(recent: list[dict], baseline: Baseline) -> float | None:
     return float(np.clip(weighted_sum / total_weight / STRESS_FULL_SCALE_SD * 100, 0, 100))
 
 
-# Vocal tension: louder, more jitter and shimmer, steeper spectral slope, each in SDs
-# from the voice baseline, averaged. Steeper = more negative slope, hence the -1.
-# TUNE: much of the research finds a tense (pressed) voice has a FLATTER slope; flip
-# spectral_slope to +1 if real data agrees.
-TENSION_PARTS = {"voice_db": 1.0, "jitter": 1.0, "shimmer": 1.0, "spectral_slope": -1.0}
-
-
-def vocal_tension(sample: dict, baseline: Baseline) -> float | None:
-    """SDs above the voice baseline, while the subject is speaking. None when silent or no voice baseline."""
-    if sample.get("pitch") is None:
-        return None
-    parts = [sign * baseline.z(key, sample[key]) for key, sign in TENSION_PARTS.items()
-             if key in baseline.mean and sample.get(key) is not None]
-    return float(np.mean(parts)) if len(parts) >= 2 else None
-
-
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:
-    """Longest stretch (seconds) inside the window where the chest barely moved."""
-    if baseline.breath_range is None or baseline.breath_range <= 0:
+    """Longest stretch (seconds) inside the window with no breath."""
+    if baseline.breath_interval is None or np.isnan(flex[in_window]).all():
         return None
-    ranges = rolling_range(t, flex, HOLD_RANGE_S)
-    holding = (ranges < HOLD_FRACTION * baseline.breath_range) & in_window
-    if np.isnan(ranges[in_window]).all():
-        return None
-    longest, run_start = 0.0, None
-    for i in range(len(t)):
-        if holding[i]:
-            if run_start is None:
-                run_start = t[i]
-            longest = max(longest, t[i] - run_start)
-        else:
-            run_start = None
-    # A flat range at time t means no movement since t - HOLD_RANGE_S.
-    return longest + HOLD_RANGE_S if longest > 0 else 0.0
+    times = t[in_window]
+    marks = [times[0], *times[flex[in_window] == 1], times[-1]]
+    return float(max(np.diff(marks)))
 
 
 def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float | None, dict]:
@@ -238,13 +185,11 @@ def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float
     post = (t >= q_t) & (t <= q_t + WINDOW_S)
     signals: dict[str, float] = {}
 
-    for key in ("gsr", "hr"):
-        if key not in baseline.mean:
-            continue
-        x = column(samples, key)
+    if "hr" in baseline.mean:
+        x = column(samples, "hr")
         before, after = x[pre & ~np.isnan(x)], x[post & ~np.isnan(x)]
         if len(before) and len(after):
-            signals[key] = round(float((after.max() - before.mean()) / baseline.std[key]), 2)
+            signals["hr"] = round(float((after.max() - before.mean()) / baseline.std["hr"]), 2)
 
     if "blink_rate" in baseline.mean:
         x = column(samples, "blink_rate")
@@ -257,8 +202,8 @@ def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float
     if hold is not None:
         signals["breath_hold_s"] = round(float(hold), 1)
 
-    parts = {k: signals[k] for k in ("gsr", "hr") if k in signals}
+    parts = {"hr": signals["hr"]} if "hr" in signals else {}
     if hold is not None:
-        parts["breath_hold"] = max(0.0, hold - NORMAL_PAUSE_S)
+        parts["breath_hold"] = max(0.0, hold - HOLD_TOLERANCE * baseline.breath_interval)
     spike = _weighted(parts, SPIKE_WEIGHTS)
     return (round(spike, 2) if spike is not None else None), signals

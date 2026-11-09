@@ -14,8 +14,9 @@ Two ways to use it:
 Matches firmware/verifi/sensors (10 Hz, one labeled line per sample):
     breath: 120, gsr: 480, heartbeat: 72, raw_ecg: 515, raw_emg: 508
 The older pulse-module sketches are still accepted:
-    breath: 512, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
-("Blood Pressure:" also works in place of "spo2:".) Lines starting with "STATUS:"
+    breath: 0, gsr: 480, heartbeat: 72, spo2: 98, temp: 31.5
+("Blood Pressure:" also works in place of "spo2:"; those two values are ignored.)
+breath is 1 on the line where a breath starts and 0 on every other line. Lines starting with "STATUS:"
 are printed, not parsed.
 
 Heart rate is passed through a median-of-3 filter over *distinct* sensor
@@ -103,16 +104,16 @@ class HRFilter:
 
 
 def parse_line(raw: str) -> dict | None:
-    """One Arduino line -> {"flex", "gsr", "hr", "spo2", "temp"}, or None for STATUS lines / garbage.
+    """One Arduino line -> {"flex", "gsr", "hr"}, or None for STATUS lines / garbage.
 
-    heartbeat, spo2 and temp read 0 (or -1) until the pulse sensor has a reading;
-    those become None so they count as missing, not as real zeros.
+    heartbeat reads 0 until the sensor has a reading; that becomes None so it counts
+    as missing, not as a real zero.
     """
     m = LINE_RE.search(raw or "")
     if not m:
         return None
     try:
-        breath, gsr, hr, spo2, temp, _raw_ecg, _raw_emg = (
+        breath, gsr, hr, _spo2, _temp, _raw_ecg, _raw_emg = (
             float(g) if g is not None else 0.0 for g in m.groups()
         )
     except ValueError:
@@ -121,8 +122,6 @@ def parse_line(raw: str) -> dict | None:
         "flex": breath,
         "gsr": gsr,
         "hr": hr if hr > 0 else None,
-        "spo2": spo2 if spo2 > 0 else None,
-        "temp": temp if temp > 0 else None,
     }
 
 
@@ -277,7 +276,7 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
     csv_file = open(log_path, "a", newline="")
     writer = csv.writer(csv_file)
     if new_file:
-        writer.writerow(["iso_time", "unix_time", "breath", "gsr", "hr", "spo2", "temp"])
+        writer.writerow(["iso_time", "unix_time", "breath", "gsr", "hr"])
 
     try:
         while True:
@@ -290,7 +289,7 @@ def run_plot(port: str, baud: int, log_path: Path) -> None:
                 continue
             s["hr"] = hr_filter.update(s["hr"])
             now = time.time()
-            writer.writerow([datetime.fromtimestamp(now).isoformat(), now, s["flex"], s["gsr"], s["hr"], s["spo2"], s["temp"]])
+            writer.writerow([datetime.fromtimestamp(now).isoformat(), now, s["flex"], s["gsr"], s["hr"]])
             csv_file.flush()
 
             for k in bufs:

@@ -7,15 +7,15 @@ compares a reading from the question with a reference:
 
 Two kinds of reading ("measure" in CATEGORIES):
   - "mean" (default): the answer window's {mu, sigma} against the session baseline's {mu, sigma}.
-  - "phasic": a short reaction, as in scoring.response(): the peak in a latency window (for skin
-    conductance 1 s after Ask to 5 s after Done asking; the 1-5 s is openCV/interview/fusion.py's)
+  - "phasic": a short reaction, as in scoring.response(): the peak in a latency window (a set time
+    after Ask to a set time after Done asking; no signal uses this at the moment)
     minus the mean of the PRE_S seconds before the question, over the baseline's sigma. Slow drift
     over a session cancels.
 
 Each signal has a "direction": +1 (a rise is suspicious), -1 (a drop is), or 0 (either way).
 Directional signals use z with its sign and a one-sided p; direction 0 uses |z| and a two-sided p.
 
-Signals are grouped into categories (Skin, Breathing, Cardiac, Voice, Blink, Lip / hand; Voice
+Signals are grouped into categories (Breathing, Cardiac, Voice, Blink, Lip / hand; Voice
 holds pitch, loudness, spectral slope, clarity, jitter and shimmer). A category of
 two-sided signals combines them into a weighted chi-square, Q = sum(w_i * z_i^2), whose tail
 probability (Satterthwaite approximation) is the CATEGORY CONFIDENCE: the chance of a departure
@@ -30,7 +30,7 @@ CONFIDENCE.
 `suspicion` = 1 - confidence is reported too, for ranking questions.
 
 Data comes in the same shapes the rest of the backend uses:
-  - live: lists of sample dicts ({"t": ..., "gsr": ..., ...}), e.g. server.Session.samples
+  - live: lists of sample dicts ({"t": ..., "hr": ..., ...}), e.g. server.Session.samples
     -> score_question() / score_live_question(); to_message() is the "confidence" field that
     server.py adds to each "response" for the dashboard's question summary
   - recorded: a session CSV from data/ (written by server.SessionLog)
@@ -38,8 +38,7 @@ Data comes in the same shapes the rest of the backend uses:
 
 Baselines follow scoring.Baseline: physiology and face from the silent baseline; voice signals
 from the voice baseline (reading aloud), voiced samples only; the same MIN_STD floors. Breathing
-is chest movement: the flex belt's range over HOLD_RANGE_S, scoring.py's breath-hold measure
-(shallower breathing = smaller range). It uses the voice baseline when there is one, because
+is the breathing rate (breaths counted by the Arduino; slower = suppressed). It uses the voice baseline when there is one, because
 answering out loud changes breathing (the reason scoring.py keeps breath_rate out of stress), so
 it is compared with breathing while reading aloud, not while silent.
 
@@ -225,30 +224,25 @@ def evaluate(baselines: dict, categories: dict) -> dict:
 # "voiced": only samples where the subject is speaking (pitch present) count.
 # "direction": +1 a rise is suspicious, -1 a drop is, 0 (default) either way.
 # "phasic": (from, to) seconds after the question: peak there minus the PRE_S before (see top).
-# "chest_range" is derived, not a column: the flex belt's range over scoring.HOLD_RANGE_S.
 
 def _voice(key: str, name: str, weight: float, direction: int = 0) -> dict:
     return {"key": key, "name": name, "weight": weight, "phase": "voice", "voiced": True, "direction": direction}
 
 
 # Category weights: evidence ranking (effect size d where known). Only their ratios matter.
-#   1 GSR .30 (d~1.55)   2 respiration .20 (d~1.11)   3 heart rate .15 (d~0.89)
-#   4 voice pitch + response latency .13 (d~0.2-0.27)   5 blink .12   6 lip / hand-to-face .05
-#   7 gaze aversion .05 -> dropped: no gaze signal is recorded, and the evidence calls it a myth.
+#   GSR has no weight: the sensor reads too steadily, so the dashboard's GSR is simulated.
+#   1 respiration .20 (d~1.11)   2 heart rate .15 (d~0.89)
+#   3 voice pitch + response latency .13 (d~0.2-0.27)   4 blink .12   5 lip / hand-to-face .05
+#   6 gaze aversion .05 -> dropped: no gaze signal is recorded, and the evidence calls it a myth.
 # Response latency is one number per answer (no mu/sigma over a window), so it isn't included.
-# Voice keeps row 4's .13 as one category; the other voice features share it, weighted inside
+# Voice keeps row 3's .13 as one category; the other voice features share it, weighted inside
 # the category (see "Voice" below).
 CATEGORIES = {
-    "Skin": {"weight": 0.30, "sensors": [
-        # Phasic response: rises 1-5 s after the question (window from openCV/interview/fusion.py).
-        {"key": "gsr", "name": "Skin conductance", "weight": 1.0, "direction": +1, "phasic": (1.0, 5.0)},
-    ]},
     "Breathing": {"weight": 0.20, "sensors": [
-        # Respiration suppression: shallower breathing = less chest movement.
-        {"key": "chest_range", "name": "Chest movement", "weight": 1.0, "phase": "voice", "direction": -1},
+        # Respiration suppression: breathing slows.
+        {"key": "breath_rate", "name": "Breathing rate", "weight": 1.0, "phase": "voice", "direction": -1},
     ]},
     "Cardiac": {"weight": 0.15, "sensors": [
-        # spo2 and temp are left out, as in stress: they barely move, or drift over a session.
         # Either direction for now: deceleration (recognition) vs acceleration (stress) depends
         # on the question type.
         {"key": "hr", "name": "Heart rate", "weight": 1.0},
@@ -257,7 +251,7 @@ CATEGORIES = {
     #   pitch 1.0 (+)     the most consistent vocal stress finding (pitch rises)
     #   loudness 0.5 (+)  louder under arousal, but also depends on distance to the mic
     #   spectral slope 0.4 (either way)  energy shifts toward high frequencies under arousal,
-    #                     but the direction is disputed (see TENSION_PARTS in scoring.py)
+    #                     but the direction is disputed
     #   clarity 0.3, jitter 0.2, shimmer 0.2 (either way)  mixed findings, noisy on short answers.
     #   These three overlap (all measure voice irregularity), so low weights keep them from
     #   counting the same evidence three times.
@@ -280,7 +274,7 @@ CATEGORIES = {
 
 # Smallest baseline sigma per signal: scoring's floors, plus hand_on_face (a 0/1 signal that is
 # usually 0 for the whole baseline, which would make any single touch infinitely significant).
-MIN_STD = {**scoring.MIN_STD, "hand_on_face": 0.1, "chest_range": scoring.MIN_STD["flex"]}
+MIN_STD = {**scoring.MIN_STD, "hand_on_face": 0.1}
 MIN_BASELINE_SAMPLES = 2                        # ddof=1 needs two
 MIN_VOICE_BASELINE = scoring.MIN_VOICE_SAMPLES  # as scoring.Baseline.add_voice
 MIN_WINDOW_SAMPLES = 3                          # values needed in the answer window
@@ -291,16 +285,12 @@ def _values(samples: list[dict], key: str, voiced: bool,
             start: float = -math.inf, end: float = math.inf) -> np.ndarray:
     """One signal's values with start <= t <= end, NaNs dropped.
 
-    scoring.column rules: None/negative/hr=0 are missing. "chest_range" is computed from flex over
-    all of samples first, so pass samples starting HOLD_RANGE_S before start to fill its window.
+    scoring.column rules: None/negative/hr=0 are missing.
     """
     if voiced:
         samples = [s for s in samples if s.get("pitch") is not None]
     t = scoring.column(samples, "t")
-    if key == "chest_range":
-        x = scoring.rolling_range(t, scoring.column(samples, "flex"), scoring.HOLD_RANGE_S)
-    else:
-        x = scoring.column(samples, key)
+    x = scoring.column(samples, key)
     return x[(t >= start) & (t <= end) & ~np.isnan(x)]
 
 
@@ -389,8 +379,7 @@ def score_question(samples: list[dict], baselines: dict, q_t: float, until: floa
     "mean" signals are compared with the session baseline. "phasic" ones with the seconds just
     before the question, using the session baseline's sigma (as scoring.response does).
     """
-    lookback = max(scoring.PRE_S, scoring.HOLD_RANGE_S)
-    nearby = _between(samples, q_t - lookback, until)
+    nearby = _between(samples, q_t - scoring.PRE_S, until)
     current, skipped = readings_from_samples(nearby, baselines, q_t, until, q_end, categories)
     lookup_base = {}
     for c, cat in baselines.items():

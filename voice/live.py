@@ -14,11 +14,11 @@ One microphone stream (sounddevice) in a background thread, analyzed with Praat
 Live features (every UPDATE_S, over the last WINDOW_S of audio). All but voice_db are
 None while nobody is talking:
     pitch           mean pitch, Hz
-    jitter          cycle-to-cycle pitch variation, %         (vocal tension)
-    shimmer         cycle-to-cycle loudness variation, %      (vocal tension)
-    voice_db        loudness over the newest LOUDNESS_S, dB   (vocal tension)
+    jitter          cycle-to-cycle pitch variation, %
+    shimmer         cycle-to-cycle loudness variation, %
+    voice_db        loudness over the newest LOUDNESS_S, dB
     hnr             harmonics-to-noise ratio, dB: how clear (periodic) the voice is
-    spectral_slope  energy 1-4 kHz minus energy 0-1 kHz, dB   (vocal tension)
+    spectral_slope  energy 1-4 kHz minus energy 0-1 kHz, dB
 
 Per answer (answer_features): response latency, answer length, speech rate, pauses,
 mean pitch, intonation (pitch SD) and HNR. Speech errors, repetitions and stuttering

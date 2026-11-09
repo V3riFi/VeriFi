@@ -196,7 +196,7 @@ function CalmComparison({ verdict }) {
 
 /* ---------- 3. What the sensors did: traces ---------- */
 
-const WINDOW_COLORS = { pre: '--band', peak: '--alert-wash', answer: '--band-normal' }
+const WINDOW_COLORS = { pre: '--band', answer: '--band-normal' }
 
 function TraceChart({ series, trace, themeVersion }) {
   const ref = useRef(null)
@@ -330,10 +330,6 @@ function Traces({ verdict }) {
         </li>
         <li>
           <span className="trace-swatch" style={{ background: 'var(--band-normal)' }} aria-hidden="true" /> Answer window
-        </li>
-        <li>
-          <span className="trace-swatch" style={{ background: 'var(--alert-wash)' }} aria-hidden="true" /> Skin reaction
-          window
         </li>
         <li>
           <span className="trace-line" aria-hidden="true" /> Ask

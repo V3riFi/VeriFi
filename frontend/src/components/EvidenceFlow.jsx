@@ -13,7 +13,7 @@ import Section from './Section'
 import { BandChip } from './VerdictPanel'
 
 // Same groups and order as backend/confidence.py CATEGORIES; used until a verdict names them.
-const GROUPS = ['Skin', 'Breathing', 'Cardiac', 'Voice', 'Blink', 'Lip / hand']
+const GROUPS = ['Breathing', 'Cardiac', 'Voice', 'Blink', 'Lip / hand']
 
 const HEAD = 46 // room for the column headings
 const FOOT = 10
