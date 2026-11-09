@@ -90,7 +90,7 @@ this replaces only the body sensors (GSR, heart rate, breathing) with fake signa
 ```text
    ┌─────────────────────┐  ┌──────────┐  ┌──────────┐
    │ ECG · EMG · GSR     │  │ Webcam   │  │ Mic      │
-   │ Button              │  │          │  │          │
+   │                     │  │          │  │          │
    └──────────┬──────────┘  └────┬─────┘  └────┬─────┘
               │                  │             │
    ┌──────────▼──────────┐       │             │
