@@ -15,8 +15,8 @@ Start the backend first (`uvicorn backend.server:app --port 8000` from the repo 
 - **Navbar:** status of each part of the rig (backend, Arduino, GSR (simulated), pulse, breathing, camera, face tracking, voice), from the backend's `status` message.
 - **Live video:** webcam frames sent by the backend. The browser never opens the camera itself.
 - **Session:** a name (defaults to Session 1, 2, 3 ...) and Start / Stop. The first part of each session records the baseline.
-- **Signal tiles:** current value of every signal and how far it is from baseline. Click one to show its chart.
-- **Combined stress chart:** the backend's live `stress` value. Every chart shows the baseline and the normal range (baseline ± 2 SD); the line turns red outside it.
+- **Signal tiles:** current value of every signal and how far it is from baseline. Click one to show its chart under *Signal charts*. Skin conductance is simulated and Breathing is an estimate (see the main README).
+- **Combined stress:** right under *Why this reading*, open by default. The backend's live `stress` value, with a bar for how much each signal counts (`stress_weights` in the `status` message). Every chart shows the baseline and the normal range (baseline ± 2 SD); the line turns red outside it.
 - **Sessions:** this tab's sessions. Click one to look at its recording again.
 
 Question markers come from the backend's `question` / `response` messages (the hardware button, or another client sending `question`).

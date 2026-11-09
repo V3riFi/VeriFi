@@ -2562,3 +2562,58 @@ input:focus-visible {
     animation: none;
   }
 }
+
+/* Combined stress: how much each signal counts */
+.stress-weights {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.stress-weights-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.stress-weights ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stress-weights li {
+  display: grid;
+  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.stress-weights-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--band);
+}
+
+.stress-weights-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+.stress-weights-share {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.stress-weights p {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}

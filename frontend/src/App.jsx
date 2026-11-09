@@ -8,6 +8,7 @@ import SessionPanel from './components/SessionPanel'
 import SessionHistory from './components/SessionHistory'
 import VerdictPanel from './components/VerdictPanel'
 import VerdictBreakdown from './components/VerdictBreakdown'
+import StressWeights from './components/StressWeights'
 import EvidenceFlow from './components/EvidenceFlow'
 import SignalTiles from './components/SignalTiles'
 import TimeChart from './components/TimeChart'
@@ -35,19 +36,18 @@ function StressHeadline({ value, baseline, recordingBaseline }) {
   )
 }
 
-// The closed "Stress & signal charts" dropdown still says where stress is.
-function StressStatus({ value, baseline, recordingBaseline, charts }) {
-  const extra = charts > 0 ? ` · ${charts} signal chart${charts === 1 ? '' : 's'}` : ''
-  if (recordingBaseline) return <span>Recording baseline…{extra}</span>
-  if (!baseline || !Number.isFinite(value)) return extra ? <span>{extra.slice(3)}</span> : null
+// The closed "Combined stress" dropdown still says where stress is.
+function StressStatus({ value, baseline, recordingBaseline }) {
+  if (recordingBaseline) return <span>Recording baseline…</span>
+  if (!baseline || !Number.isFinite(value)) return null
   const over = alertState(value, thresholdsFor(STRESS, baseline)) !== null
   return over ? (
     <span className="tile-alert">
-      <span aria-hidden="true">▲</span> {Math.round(value)} / 100, over the alert line{extra}
+      <span aria-hidden="true">▲</span> {Math.round(value)} / 100, over the alert line
     </span>
   ) : (
     <span>
-      {Math.round(value)} / 100, within normal{extra}
+      {Math.round(value)} / 100, within normal
     </span>
   )
 }
@@ -78,6 +78,8 @@ export default function App() {
   const [whyOpen, setWhyOpen] = useSectionOpen('why')
   // The data-to-result picture is open by default: it's the overview of how the verdict is built.
   const [flowOpen, setFlowOpen] = useSectionOpen('flow', true)
+  // Open by default, right under the analysis of each answer.
+  const [stressOpen, setStressOpen] = useSectionOpen('stress', true)
   const [chartsOpen, setChartsOpen] = useSectionOpen('charts')
   // The answer shown in "Why this reading" (null = the newest).
   const [selectedAnswer, setSelectedAnswer] = useState(null)
@@ -106,6 +108,18 @@ export default function App() {
     : viewed.baseline
       ? 'No stress values in this session.'
       : 'Recording baseline. The combined stress line starts when it is done.'
+
+  const viewHead = (
+    <div className="view-head">
+      <h2 className="section-title">
+        {reviewing ? `${viewed.name}, recorded` : active ? `${active.name}, live` : 'Live, last 60 seconds'}
+      </h2>
+      <p className="view-help">
+        Shaded band: normal range (baseline ± {active?.baseline?.alertSd ?? viewed?.baseline?.alertSd ?? 2} SD). The
+        line turns red outside it.
+      </p>
+    </div>
+  )
 
   return (
     <div className="app">
@@ -162,6 +176,35 @@ export default function App() {
             onToggle={setWhyOpen}
           />
 
+          <Section
+            className="charts"
+            icon="charts"
+            title="Combined stress"
+            status={
+              <StressStatus
+                value={reviewing ? null : state.latest?.stress}
+                baseline={active?.baseline}
+                recordingBaseline={active !== null && !active.baseline}
+              />
+            }
+            open={stressOpen}
+            onToggle={setStressOpen}
+          >
+            {viewHead}
+            <TimeChart signal={STRESS} height={260} labelQuestions emptyText={stressEmpty}>
+              <StressHeadline
+                value={reviewing ? null : state.latest?.stress}
+                baseline={active?.baseline}
+                recordingBaseline={active !== null && !active.baseline}
+              />
+            </TimeChart>
+            <p className="stress-explainer">
+              Every signal's distance from this session's baseline, weighted as shown below. A signal that is far from
+              its baseline counts for more, so one strong reaction isn't averaged away.
+            </p>
+            <StressWeights weights={state.stressWeights} />
+          </Section>
+
           <SignalTiles
             latest={state.latest}
             baseline={active?.baseline ?? null}
@@ -174,44 +217,12 @@ export default function App() {
           <Section
             className="charts"
             icon="charts"
-            title="Stress & signal charts"
-            status={
-              <StressStatus
-                value={reviewing ? null : state.latest?.stress}
-                baseline={active?.baseline}
-                recordingBaseline={active !== null && !active.baseline}
-                charts={openKeys.length}
-              />
-            }
+            title="Signal charts"
+            status={openKeys.length > 0 ? `${openKeys.length} open` : 'Press Show on a signal'}
             open={chartsOpen}
             onToggle={setChartsOpen}
           >
-            <div className="view-head">
-              <h2 className="section-title">
-                {reviewing
-                  ? `${viewed.name}, recorded`
-                  : active
-                    ? `${active.name}, live`
-                    : 'Live, last 60 seconds'}
-              </h2>
-              <p className="view-help">
-                Shaded band: normal range (baseline ± {active?.baseline?.alertSd ?? viewed?.baseline?.alertSd ?? 2}{' '}
-                SD). The line turns red outside it.
-              </p>
-            </div>
-
-            <TimeChart signal={STRESS} height={260} labelQuestions emptyText={stressEmpty}>
-              <StressHeadline
-                value={reviewing ? null : state.latest?.stress}
-                baseline={active?.baseline}
-                recordingBaseline={active !== null && !active.baseline}
-              />
-            </TimeChart>
-            <p className="stress-explainer">
-              Every signal's distance from this session's baseline, weighted toward heart rate. A
-              signal that is far from its baseline counts for more, so one strong reaction isn't averaged away.
-            </p>
-
+            {viewHead}
             {openKeys.length > 0 ? (
               <div className="signal-charts">
                 {SIGNALS.filter((signal) => openKeys.includes(signal.key)).map((signal) => (

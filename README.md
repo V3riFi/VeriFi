@@ -72,8 +72,8 @@ It uses the real Arduino, camera and mic. `python3 run.py --fake-body` replaces 
 | Signal | Source | What we look at |
 |---|---|---|
 | Skin conductance | Grove GSR | **Simulated.** The sensor reads too steadily to use, so the dashboard shows a flat value at a real session's average. No weight in any score |
-| Heart rate | BioAmp ECG | Change from baseline |
-| Breathing | BioAmp EMG on the chest | Breath events, used to estimate the rate and spot holds |
+| Heart rate | BioAmp ECG | Change from baseline. Beats are found on the Arduino (see [Heartbeat detection](#heartbeat-detection)) |
+| Breathing | BioAmp EMG on the chest | Breath events, used to estimate the rate and spot holds (see [Breathing](#breathing)) |
 | Face | Webcam + MediaPipe Face Landmarker (`openCV/vision`) | Blink rate (Eye Aspect Ratio), hand over face, lip compression. Blinks ignored if head turned >35° or tilted >25° — keep camera at eye level |
 | Voice | Laptop mic + Parselmouth (`voice/live.py`) | Live: pitch, HNR (voice clarity), jitter, shimmer, loudness, and spectral slope. Per answer: response latency, length, speech rate, pauses, pitch, intonation (pitch SD), HNR. Shown in the dashboard's Voice dropdown, not part of stress. Speech errors, repetitions and stuttering need a transcript, which VeriFi doesn't make |
 
@@ -133,6 +133,9 @@ It uses the real Arduino, camera and mic. `python3 run.py --fake-body` replaces 
 firmware/verifi/sensors/   Arduino sketch (sensors.ino), streams sensors over serial (hardware team)
 backend/server.py          FastAPI app + /ws WebSocket, session/question timing, CSV logging (entry point)
 backend/serial_io.py       serial reader thread
+backend/clients.py         one queue per browser tab, so a stuck tab can't freeze the session
+backend/confidence.py      per-answer score against the baseline
+backend/verdict.py         turns that score into a deception likelihood
 backend/scoring.py         baseline, live stress indicator, per-question scoring
 backend/camera.py          webcam capture thread, sends small JPEG frames
 backend/face.py            runs the CV group's face engine on camera frames
@@ -221,9 +224,8 @@ Start the frontend in a second terminal. `http://localhost:8000/` shows whether 
 ### 7. Arduino firmware (hardware only)
 
 1. Install the [Arduino IDE](https://www.arduino.cc/en/software).
-2. Install the **DFRobot_BloodOxygen_S** library (for the MAX30102 module).
-3. Open `firmware/verifi/sensors/`, select **Arduino Uno** + the right port, upload.
-4. **Close the Serial Monitor/Plotter before running the backend** — only one program can use the port at a time.
+2. Open `firmware/verifi/sensors/`, select **Arduino Uno** + the right port, upload. No extra libraries are needed.
+3. **Close the Serial Monitor/Plotter before running the backend** — only one program can use the port at a time.
 
 Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmodem…` · Linux `/dev/ttyACM0` (or `/dev/ttyUSB0` on some clones).
 
@@ -291,7 +293,7 @@ Port names: Windows `COM3`, `COM4`, … (Device Manager) · Mac `/dev/cu.usbmode
 | `response` | Sent ~10 s after a question starts, or 10 s after Done asking if that's later. `voice` holds the answer's voice features (`null` without a mic): `latency_s` (Done asking, or the estimated end of the question when `latency_marked` is false, to the first word), `duration_s` (first to last word), `speech_rate` (syllables/s), `pauses` and `pause_s` (silences of 0.3 s or more), `pitch` (Hz), `intonation` (pitch SD, Hz), `hnr` (dB), `cut` (still talking when the window closed). Fields are `null` when no answer was heard. `spike` = overall response in SD above baseline; `signals` breaks it down per signal (SD, except `breath_hold_s` in seconds). `confidence` (`backend/confidence.py`, `null` if it couldn't be scored): `suspicion` 0-1 overall, and `categories`, a list of `{name, weight, suspicion, signals, missing}` (each signal: `key`, `name`, `weight`, `direction` +1/-1/0, `phasic`, `base`, `now`, `z`, `suspicion`; `missing` says why a category or signal had no data). Suspicion is how far the answer departs from the baseline (1 - the chance of a departure this big if nothing changed); the dashboard's Question summary shows it. `verdict` (`backend/verdict.py`, `null` if it couldn't be scored) is the answer's deception likelihood: `likelihood` 0-1 (`null` when a quality gate failed), `interval` its 80% range, `band` `low`/`unclear`/`elevated`/`high`/`insufficient`, `reason` why not when insufficient, and `result` (`calm`/`unclear`/`reaction`/`insufficient`, kept for compatibility). For the "Why this reading" breakdown: `z` (combined score), `z_eff`, `log_lr`, `norm` (√Σw²), `model`; `categories`, one per signal group: `name`, `weight`, `z`, `contribution` (w·z/√Σw²; they add up to `z`), `suspicion`, `method`, `missing`, `signals` (raw values per cue: `base`/`base_sd`, `now`/`now_sd`, `z`, `p`, `direction`, `phasic`) and `null` (pseudo-questions across the calm baseline: `n`, `mean`, `sd`, histogram `edges`/`counts`, and this answer's `percentile`); `null_total` the same for `z`; `gates` (`key`, `label`, `pass`, `detail`); `trace` (raw signals from −10 to +10 s around Ask, `points` as [seconds from Ask, value], plus the measurement `windows` and `end` = Done asking). |
 | `session_verdict` | After every `response`: all scored answers so far, re-combined. `likelihood`, `interval`, `band` as in a verdict, `log_lr` (sum over answers), `z` (Stouffer over the answers' scores), `answers` (how many added evidence), `counts` per band, and `history`: the session likelihood after each answer. |
 | `summary` | Sent on `stop`. Every question, highest spike first, with its `latency_s`, overall `suspicion` (see `confidence` in `response`), `likelihood` and `band`; `session` is the final `session_verdict`. |
-| `status` | ~1/sec and on connect. Each component is `ok`, `missing`, or `off`. `session` describes the running session (or `null`) so a reloaded dashboard can reattach: its questions carry `text`, `due` and `verdict`, and `session.verdict` is the latest `session_verdict`. |
+| `status` | ~1/sec and on connect. Each component is `ok`, `missing`, `off` or `simulated`. `stress_weights` gives the weights behind the combined stress score. `session` describes the running session (or `null`) so a reloaded dashboard can reattach: its questions carry `text`, `due` and `verdict`, and `session.verdict` is the latest `session_verdict`. |
 | `frame` | Webcam, up to 30/sec (every camera frame), base64 JPEG ~480 px wide. `VERIFI_CAMERA=off` disables, `VERIFI_CAMERA=1` picks another camera. The Mac terminal needs camera permission. |
 
 ### Scoring (`backend/scoring.py`)
@@ -312,6 +314,18 @@ Every answer is scored on its own the moment its window closes (`due`), and a li
 6. **Why this reading.** Each group's contribution `w·z/√Σw²` adds up exactly to `z` (the waterfall). Pseudo-questions every second across the silent baseline give each group's calm-moment distribution (the histograms).
 
 Constants to tune on real sessions (all in `backend/verdict.py`): `LAMBDA` 2.0, `SIGMA` 1.0, `PRIOR` 0.5, `BANDS` 0.30/0.60/0.85, `MIN_CATEGORIES` 2, `MIN_COVERAGE` 0.8, `MAX_GAP_S` 2, `PSEUDO_STEP_S` 1; `PROGRESS_EVERY_S` 0.3 in `backend/server.py`. Tests: `python -m unittest discover -s backend/tests -t . -v`.
+
+### Combined stress weights
+
+The dashboard's **Combined stress** panel shows these live, from `stress_weights` in the `status` message. They are `STRESS_WEIGHTS` in `backend/scoring.py`.
+
+| Signal | Weight | Share of the score |
+|---|---|---|
+| Heart rate (counts only above baseline) | 0.30 | 60% |
+| Blink rate (counts either way) | 0.13 | 26% |
+| Lip compression (counts only above baseline) | 0.07 | 14% |
+
+Each signal's distance from baseline (in SDs) is averaged using these weights, and 8 SD maps to 100. A signal more than 1 SD out has its weight multiplied by its distance, so its real share rises during a reaction. A signal with no data is skipped and the others rescale. Skin conductance has no weight because it is simulated; breathing rate is left out because talking changes it, and voice is shown separately.
 
 ### Rules
 
@@ -340,6 +354,18 @@ Constants to tune on real sessions (all in `backend/verdict.py`): `LAMBDA` 2.0, 
 | BioAmp ECG (heart rate) | VCC → 5V, GND → GND, OUT → A0 |
 | BioAmp EMG (breathing) | VCC → 5V, GND → GND, OUT → A2 |
 | Question button (interrogator) | D2 → GND (internal pullup, no resistor needed) |
+
+### Heartbeat detection
+
+The sketch samples the ECG at 125 Hz, band-passes it to 5-20 Hz to keep the sharp QRS spike, and calls a beat when the energy over about 100 ms rises above a threshold that adapts to the signal. After each beat it ignores the signal for 300 ms, which skips the T wave but still allows 200 BPM. (An earlier 700 ms wait swallowed every second beat above 85 BPM, so 100 BPM read as 50.) The heart rate is the median of the last 5 beat intervals, smoothed. `heartbeat` is `0` when the signal is pinned at the amplifier's limits, too irregular or too weak, so a gap appears instead of a guess. A new rate takes about 13 s to show fully after a sudden jump.
+
+### Breathing
+
+`breath` is a breath **event**: `1` on the line where an inhale seems to start. Events can be missed or doubled, so they aren't counted as the rate. `breath_rate` starts at a typical 15 breaths/min and moves 40% of the way toward how often events arrive over 30 s (`TYPICAL_BREATH_RATE` and `BREATH_EVENT_GAIN` in `backend/scoring.py`), so 30 events/min reads as 21. With no events it shows a gap. A breath hold is the longest gap between events overlapping a question's window; up to two typical gaps is normal, so one missed event isn't a hold.
+
+### Simulated skin conductance
+
+The GSR sensor reads too steadily to use, so the backend replaces it with a flat value near 17.4, the average of a real session (`SimulatedGSR` in `backend/server.py`). The navbar says Simulated and the tile says so too. The CSV's `gsr` column holds this simulated value. It has no weight in stress, spike or the verdict.
 
 ### Serial protocol
 
@@ -378,9 +404,22 @@ Lines from older sketches ending in `spo2:` and `temp:` still parse; those two v
 
 ---
 
+## Troubleshooting
+
+| What you see | Likely cause | What to do |
+|---|---|---|
+| Arduino connected but no body signals | The backend doesn't recognise the sketch's line format, or nothing has been uploaded | Upload `firmware/verifi/sensors/`, then restart `run.py` |
+| Breathing stays blank | The Uno has an older sketch with no breath events, or the first 20 s of warm-up | Upload the current sketch and wait |
+| Heart rate blank or `0` | Electrodes off or poor contact | Clean dry skin, fresh electrodes, sit still. A blank is deliberate when the signal can't be trusted |
+| "The microphone isn't working" notice, or Voice shows missing | The mic dropped out (laptop slept, headset connected, input changed) | The backend retries every 5 s and refreshes the device list. When Voice reads Connected, start a new session, because a session can't recover a voice baseline it missed |
+| Video or the whole page stops updating | A stuck browser tab used to freeze this; it is now disconnected after 5 s | Look in the terminal for `dashboard: disconnected a browser tab`. Use one dashboard tab |
+| `camera: lost the video` in the terminal | The webcam stopped delivering frames | It retries every 5 s; close other apps using the camera |
+| `python3 run.py` says a port is in use | Another copy of VeriFi or `npm run dev` is running | Stop it (Ctrl+C in its terminal) and try again |
+
 ## Limitations
 
 - **Physiological responses show stress and arousal, not lying.** An innocent person can spike on an emotional or accusatory question; a calm liar may not spike at all. VeriFi flags reactions for follow-up — never a verdict.
+- **The verdict depends on few signals.** With skin conductance out of the score, one signal reacting alone usually reads as Low. It takes two or more moving together, and the constants haven't been tuned on real sessions.
 - **Talking affects the signals.** Speaking changes breathing and nudges heart rate, so breathing data during an answer is unreliable. Short answers (yes/no, a few words) give cleaner results.
 - **Compare within one session, not across people.** Everything is relative to that person's own baseline.
 - Small test set, collected during a weekend hackathon.

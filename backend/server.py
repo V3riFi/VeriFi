@@ -78,6 +78,8 @@ ANSWER_S = 10.0
 ANSWER_KEYS = ["latency_s", "latency_marked", "duration_s", "speech_rate", "pauses", "pause_s",
                "pitch", "intonation", "hnr", "cut"]
 VOICE_RESULT_TIMEOUT_S = 5.0
+MIC_MISSING_MESSAGE = ("The microphone isn't working, so this session has no voice measurements. "
+                       "Check the microphone, then stop and start a new session.")
 # While an answer's window is open, a provisional verdict on the partial window goes out this often.
 PROGRESS_EVERY_S = 0.3
 FACE_KEYS = ["blink_rate", "hand_on_face", "lip_compression"]
@@ -348,6 +350,8 @@ class Session:
                                "duration": VOICE_BASELINE_S, "sentences": VOICE_SENTENCES})
             elif VOICE_BASELINE_S > 0:
                 print(f"voice baseline skipped: microphone is {voice.status}", flush=True)
+                if voice.status == "missing":
+                    events.append({"type": "error", "message": MIC_MISSING_MESSAGE})
 
         if self.voice_end is not None and not self.voice_done and t >= self.voice_end:
             self.voice_done = True
@@ -450,6 +454,7 @@ def status_message() -> dict:
             "face": "simulated" if FAKE and face.status != "ok" else face.status,
             "voice": voice.status,
         },
+        "stress_weights": scoring.STRESS_WEIGHTS,
         # Lets a dashboard that reloads mid-session pick the session back up.
         "session": None if session is None else {
             "subject": session.subject,
@@ -639,6 +644,8 @@ async def handle(message: dict) -> str | None:
             return "A session is already running. Send stop first."
         session = Session(str(message.get("subject") or "subject"), now)
         await broadcast({"type": "baseline", "t": round(now, 3), "phase": "start", "duration": BASELINE_S})
+        if voice.status == "missing":
+            await broadcast({"type": "error", "message": MIC_MISSING_MESSAGE})
 
     elif kind == "question":
         if not session:

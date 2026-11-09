@@ -39,6 +39,7 @@ let dataVersion = 0
 let state = {
   connection: 'connecting',
   components: null, // from the backend's "status" message
+  stressWeights: null, // { signal field: weight } of the combined stress score, from "status"
   latest: null, // most recent sample, refreshed a few times a second
   sampleHz: 0,
   sessions: [], // this tab's sessions, oldest first
@@ -304,6 +305,7 @@ function onSummary(message) {
 }
 
 function onStatus(message) {
+  if (message.stress_weights && !state.stressWeights) setState({ stressWeights: message.stress_weights })
   if (message.components && typeof message.components === 'object') setState({ components: message.components })
   if (!('session' in message)) return
 

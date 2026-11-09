@@ -1,6 +1,8 @@
 // BioAmp ECG (A0) heartbeat + GSR (A1) + BioAmp EMG (A2) breathing
 // Output: breath: X, gsr: X, heartbeat: X, raw_ecg: X, raw_emg: X   at 10 Hz
-//   breath = single 1 pulse on the line where an inhale starts, 0 on every other line
+//   breath    = single 1 on the line where an inhale seems to start, 0 on every other line
+//   gsr       = raw reading; the backend ignores it and shows a simulated value
+//   heartbeat = BPM from the ECG, 0 when there's no trustworthy signal
 
 #include <math.h>
 

@@ -55,6 +55,8 @@ PITCH_FLOOR = 75        # Hz, the pitch search range
 PITCH_CEILING = 500
 MIN_VOICED_S = 0.15     # less voiced audio than this in the window = not speaking
 REOPEN_EVERY_S = 5.0
+STALL_S = 2.0           # no audio for this long means the mic has stopped
+CLEANUP_WAIT_S = 2.0    # longest to wait for a dead device to close
 HISTORY_S = 45.0        # audio kept in memory for answer analysis (longest answer window + margin)
 
 LIVE_KEYS = ("pitch", "jitter", "shimmer", "voice_db", "hnr", "spectral_slope")
@@ -278,6 +280,7 @@ class VoiceTracker:
         self._requests: queue.Queue = queue.Queue()
         self._writer: _WavWriter | None = None
         self._running = False
+        self._opened_before = False
 
     def start(self) -> None:
         if self.disabled:
@@ -395,6 +398,12 @@ class VoiceTracker:
     def _open(self):
         import sounddevice as sd
 
+        if self._opened_before:
+            # PortAudio keeps the device list from when it started. Without a refresh, a mic that
+            # dropped out (laptop slept, headset connected, default input changed) never comes back.
+            self._bounded(sd._terminate)
+            self._bounded(sd._initialize)
+        self._opened_before = True
         try:
             stream = sd.InputStream(
                 samplerate=SAMPLE_RATE, channels=1, dtype="float32",
@@ -404,47 +413,78 @@ class VoiceTracker:
         except Exception as e:
             print(f"voice: couldn't open the microphone ({e})", flush=True)
             return None
-        print(f"voice: listening on {sd.query_devices(stream.device)['name']}", flush=True)
+        try:
+            name = sd.query_devices(stream.device)["name"]
+        except Exception:  # noqa: BLE001 - only used for this message
+            name = "the microphone"
+        print(f"voice: listening on {name}", flush=True)
         return stream
+
+    def _bounded(self, action) -> None:
+        """Runs an audio-system call that can raise or hang on a dead device, without risking this thread."""
+        def attempt() -> None:
+            try:
+                action()
+            except Exception as e:  # noqa: BLE001 - the next reopen tries again
+                print(f"voice: audio system error ({e!r})", flush=True)
+        worker = threading.Thread(target=attempt, name="voice-cleanup", daemon=True)
+        worker.start()
+        worker.join(CLEANUP_WAIT_S)
+
+    def _drop(self, stream) -> None:
+        """Lets go of a dead stream and forgets its audio, so old audio can't pass as live."""
+        if stream is not None:
+            self._bounded(stream.close)
+        with self._lock:
+            self._history.clear()
+            self._latest = None
+        self.status = "missing"
 
     def _run(self) -> None:
         stream = None
         next_tick = time.monotonic()
         while not self._stop.is_set():
-            self._answer_requests()
-            if stream is None:
-                self.status = "missing"
-                stream = self._open()
-                if stream is None:
-                    self._stop.wait(REOPEN_EVERY_S)
-                    continue
-                self._last_block = time.time()
-
-            next_tick += UPDATE_S
-            self._stop.wait(max(0.0, next_tick - time.monotonic()))
-
-            now = time.time()
-            if now - self._last_block > 2.0:  # mic unplugged or stream died
-                print("voice: microphone stopped sending audio, reopening", flush=True)
-                stream.close()
-                stream = None
-                continue
-
-            audio = self._recent(WINDOW_S)
-            if audio is None:
-                continue
             try:
-                features = live_features(audio)
-            except Exception as e:  # never let one bad window kill the thread
-                print(f"voice: analysis error: {e}", flush=True)
-                continue
-            with self._lock:
-                self._latest = (now, features)
-            self.status = "ok"
-            next_tick = max(next_tick, time.monotonic())  # don't burst if we fell behind
+                self._answer_requests()
+                if stream is None:
+                    self.status = "missing"
+                    stream = self._open()
+                    if stream is None:
+                        self._stop.wait(REOPEN_EVERY_S)
+                        continue
+                    self._last_block = time.time()
+                    next_tick = time.monotonic()
+
+                next_tick += UPDATE_S
+                self._stop.wait(max(0.0, next_tick - time.monotonic()))
+
+                now = time.time()
+                if now - self._last_block > STALL_S:  # mic unplugged or stream died
+                    print("voice: microphone stopped sending audio, reopening", flush=True)
+                    self._drop(stream)
+                    stream = None
+                    continue
+
+                audio = self._recent(WINDOW_S)
+                if audio is None:
+                    continue
+                try:
+                    features = live_features(audio)
+                except Exception as e:  # never let one bad window kill the thread
+                    print(f"voice: analysis error: {e}", flush=True)
+                    continue
+                with self._lock:
+                    self._latest = (now, features)
+                self.status = "ok"
+                next_tick = max(next_tick, time.monotonic())  # don't burst if we fell behind
+            except Exception as e:  # noqa: BLE001 - this thread must outlive any one failure
+                print(f"voice: unexpected error, restarting the microphone ({e!r})", flush=True)
+                self._drop(stream)
+                stream = None
+                self._stop.wait(REOPEN_EVERY_S)
 
         if stream is not None:
-            stream.close()
+            self._bounded(stream.close)
 
 
 # ----------------------------- Command line ---------------------------------

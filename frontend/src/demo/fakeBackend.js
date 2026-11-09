@@ -714,6 +714,7 @@ export function connectDemo({ onMessage, onStatus }) {
       face: 'simulated',
       voice: 'off',
     },
+    stress_weights: STRESS_WEIGHTS,
     session: session ? session.statusEntry() : null,
   })
 
