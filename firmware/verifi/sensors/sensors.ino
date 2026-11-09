@@ -1,16 +1,6 @@
 // BioAmp ECG (A0) heartbeat + GSR (A1) + BioAmp EMG (A2) breathing
 // Output: breath: X, gsr: X, heartbeat: X, raw_ecg: X, raw_emg: X   at 10 Hz
-//
-// WIRING:
-//   BioAmp ECG   OUT -> A0    IN+ right wrist, IN- left wrist, REF back of right hand
-//   GSR          OUT -> A1    electrodes via 3.5 mm jack
-//   BioAmp EMG   OUT -> A2    IN+ right lower chest ~2.5cm above bottom rib,
-//                              IN- left lower chest mirror, REF sternum
-//   LED          D13          blinks per detected heartbeat
-//
-// Breathing uses floor-subtraction: a slow envelope tracks the constant
-// noise floor, and the fast envelope minus floor gives the real breath
-// bursts. This eliminates the "constant 3000-5000" noise-artifact reading.
+//   breath = single 1 pulse on the line where an inhale starts, 0 on every other line
 
 #include <math.h>
 
@@ -19,55 +9,24 @@ const int GSR_PIN = A1;
 const int EMG_PIN = A2;
 const int LED_PIN = 13;
 
-const unsigned long ECG_SAMPLE_US = 1000000UL / 125;   // 125 Hz
-const unsigned long PRINT_US      = 100000UL;          // 10 Hz
+const unsigned long ECG_SAMPLE_US = 1000000UL / 125;
+const unsigned long PRINT_US      = 100000UL;
 
 unsigned long lastEcgSample = 0;
 unsigned long lastPrint     = 0;
 
-// --- ECG beat detection ---
-// A 5-20 Hz band-pass keeps the sharp QRS spike and drops drift, the T wave and
-// 60 Hz mains. A beat is the filtered energy over ~100 ms rising above a threshold
-// that follows the signal, so it copes with weak or strong electrode contact.
-struct Biquad { float b0, b1, b2, a1, a2, z1, z2; };
-Biquad ecgHighPass = { 0.8370892f, -1.6741784f, 0.8370892f, -1.6474600f, 0.7008968f, 0, 0 };
-Biquad ecgLowPass  = { 0.1453239f, 0.2906478f, 0.1453239f, -0.6710291f, 0.2523246f, 0, 0 };
-
-const int ENERGY_SAMPLES = 12;                // 96 ms at 125 Hz
-float energyBuf[ENERGY_SAMPLES] = {0};
-int   energyIdx = 0;
-
-const int   ECG_SETTLE_SAMPLES = 63;          // ignore the filter's first 0.5 s
-const int   ECG_LEARN_SAMPLES  = 250;         // then 2 s to learn the signal's size
-int   ecgStartup = ECG_SETTLE_SAMPLES + ECG_LEARN_SAMPLES;
-float signalLevel = 0.0;                      // typical energy of a beat
-float noiseLevel  = 0.0;                      // typical energy between beats
-const float THRESHOLD_FRACTION = 0.3f;
-const float MIN_BEAT_TO_NOISE  = 4.0f;       // weaker than this is noise, not a beat
-
-// The shortest possible gap between beats (200 BPM). Long enough to skip the T wave.
-const unsigned long PEAK_COOLDOWN_US = 300000UL;
-const unsigned long BEAT_MAX_US      = 250000UL;  // longest a single beat can last
-const unsigned long RELEARN_AFTER_US = 2000000UL; // no beats this long: lower the threshold
-bool  inBeat = false;
-float beatEnergy = 0.0;
-float beatPeak   = 0.0;
-unsigned long beatStartUs = 0;
-unsigned long beatPeakUs  = 0;
-unsigned long lastPeakUs  = 0;
+// --- ECG peak detection ---
+float    ecgAvg      = 512.0;
+const float AVG_ALPHA = 0.002;
+const float PEAK_DELTA = 55.0;
+const unsigned long PEAK_COOLDOWN_US = 700000UL;
+unsigned long lastPeakUs = 0;
 
 // --- ECG signal validity ---
-const int   ECG_RAIL_LOW  = 15;               // pinned at a rail = electrode off
-const int   ECG_RAIL_HIGH = 1008;
+const int   ECG_VALID_MIN = 400;
+const int   ECG_VALID_MAX = 620;
 const unsigned long NO_PEAK_TIMEOUT_US = 3000000UL;
-// Disconnected electrodes make the amplifier swing between both rails.
-const int   ECG_QUALITY_SAMPLES = 125;        // judged once a second
-const int   ECG_MAX_RAILED      = 18;         // about 15%; a strong beat can touch a rail briefly
-int   ecgQualityCount = 0;
-int   ecgRailedCount  = 0;
-bool  ecgSignalClean  = false;
-// Real beats are evenly spaced; noise isn't. Allowed spread, as a fraction of the median.
-const float MAX_INTERVAL_SPREAD = 0.25f;
+unsigned long lastValidEcgUs = 0;
 
 // --- BPM ---
 #define BPM_BUFFER_SIZE 5
@@ -86,14 +45,30 @@ const float HR_Z_LIMIT   = 2.0f;
 
 int   targetHR    = 0;
 float displayedHR = 0.0;
+float hrvJitter   = 0.0;
 
 // --- Breathing EMG envelope with floor subtraction ---
 float    emgBaseline     = 512.0;
-const float EMG_BASELINE_ALPHA = 0.001;   // ~40 s DC tracking
-float    emgEnvelope     = 0.0;            // fast — tracks bursts
-const float EMG_ALPHA    = 0.05;           // ~200 ms smoothing
-float    emgEnvelopeSlow = 0.0;            // slow — tracks noise floor
-const float EMG_SLOW_ALPHA = 0.001;        // ~40 s — matches baseline
+const float EMG_BASELINE_ALPHA = 0.001;
+float    emgEnvelope     = 0.0;
+const float EMG_ALPHA    = 0.05;
+float    emgEnvelopeSlow = 0.0;
+const float EMG_SLOW_ALPHA = 0.001;
+
+// --- Breath single-pulse state machine ---
+const float BREATH_PEAK_FRAC       = 0.6f;
+const float BREATH_MIN_LEVEL       = 600.0f;
+const float BREATH_MAX_LEVEL       = 1500.0f;
+const float BREATH_REARM_FRAC      = 0.3f;    // must dip below this to re-arm
+const unsigned long BREATH_WARMUP_MS   = 20000UL;
+const unsigned long MIN_BREATH_GAP_MS  = 1500UL;
+
+float breathHist[3]     = {0, 0, 0};
+uint8_t breathHistIdx   = 0;
+float breathPeak        = 0.0f;
+bool  warmupDone        = false;
+bool  dippedSinceLast   = false;      // signal dropped below re-arm level since last fire
+unsigned long lastBreathMs = 0;
 
 float historyMean() {
   if (hrHistCount == 0) return 0;
@@ -131,57 +106,6 @@ void addHistory(int value) {
   if (hrHistCount < HR_HIST_SIZE) hrHistCount++;
 }
 
-float runBiquad(Biquad &f, float x) {
-  float y = f.b0 * x + f.z1;
-  f.z1 = f.b1 * x - f.a1 * y + f.z2;
-  f.z2 = f.b2 * x - f.a2 * y;
-  return y;
-}
-
-// Feed one filtered ECG sample. True once a beat has ended; beatUs is when it peaked.
-bool detectBeat(float filtered, unsigned long now, unsigned long &beatUs) {
-  energyBuf[energyIdx] = filtered * filtered;
-  energyIdx = (energyIdx + 1) % ENERGY_SAMPLES;
-  float energy = 0;
-  for (int i = 0; i < ENERGY_SAMPLES; i++) energy += energyBuf[i];
-
-  if (ecgStartup > 0) {
-    if (ecgStartup-- <= ECG_LEARN_SAMPLES) {
-      if (energy > signalLevel) signalLevel = energy;
-      noiseLevel += 0.02f * (energy - noiseLevel);
-    }
-    return false;
-  }
-
-  if (!inBeat) {
-    float threshold = noiseLevel + THRESHOLD_FRACTION * (signalLevel - noiseLevel);
-    if (energy > threshold && now - lastPeakUs > PEAK_COOLDOWN_US) {
-      inBeat = true;
-      beatEnergy = energy;
-      beatPeak = fabs(filtered);
-      beatStartUs = beatPeakUs = now;
-      return false;
-    }
-    noiseLevel += 0.01f * (energy - noiseLevel);
-    if (now - lastPeakUs > RELEARN_AFTER_US) signalLevel *= 0.99f;
-    return false;
-  }
-
-  if (fabs(filtered) > beatPeak) {
-    beatPeak = fabs(filtered);
-    beatPeakUs = now;
-  }
-  if (energy > beatEnergy) beatEnergy = energy;
-  if (energy > 0.5f * beatEnergy && now - beatStartUs < BEAT_MAX_US) return false;
-
-  inBeat = false;
-  // One huge motion spike shouldn't raise the threshold past the real beats.
-  float capped = (beatEnergy < 4.0f * signalLevel) ? beatEnergy : 4.0f * signalLevel;
-  signalLevel += 0.125f * (capped - signalLevel);
-  beatUs = beatPeakUs;
-  return beatEnergy > MIN_BEAT_TO_NOISE * noiseLevel;
-}
-
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
@@ -190,6 +114,7 @@ void setup() {
   pinMode(ECG_PIN, INPUT);
   pinMode(GSR_PIN, INPUT);
   pinMode(EMG_PIN, INPUT);
+  randomSeed(analogRead(A3));
   delay(500);
   Serial.println("STATUS: starting");
   Serial.println("STATUS: ECG A0, GSR A1, EMG A2");
@@ -202,26 +127,22 @@ void loop() {
   if (now - lastEcgSample >= ECG_SAMPLE_US) {
     lastEcgSample = now;
 
-    // ECG beat detection
-    int ecg = analogRead(ECG_PIN);
-    bool ecgConnected = (ecg > ECG_RAIL_LOW && ecg < ECG_RAIL_HIGH);
-    if (!ecgConnected) ecgRailedCount++;
-    if (++ecgQualityCount >= ECG_QUALITY_SAMPLES) {
-      ecgSignalClean = (ecgRailedCount <= ECG_MAX_RAILED);
-      ecgQualityCount = 0;
-      ecgRailedCount = 0;
-    }
+    float ecg = (float)analogRead(ECG_PIN);
+    ecgAvg += AVG_ALPHA * (ecg - ecgAvg);
 
-    float ecgFiltered = runBiquad(ecgLowPass, runBiquad(ecgHighPass, (float)ecg - 512.0f));
-    unsigned long beatUs = 0;
-    bool peak = detectBeat(ecgFiltered, now, beatUs) && ecgConnected && ecgSignalClean;
+    bool inValidBand = (ecg > ECG_VALID_MIN && ecg < ECG_VALID_MAX);
+    if (inValidBand) lastValidEcgUs = now;
+
+    bool peak = inValidBand &&
+                (ecg - ecgAvg > PEAK_DELTA) &&
+                (now - lastPeakUs > PEAK_COOLDOWN_US);
 
     digitalWrite(LED_PIN, peak ? HIGH : LOW);
 
     if (peak) {
       if (lastPeakUs > 0) {
-        uint32_t interval = beatUs - lastPeakUs;
-        if (interval >= PEAK_COOLDOWN_US && interval < 1500000UL) {
+        uint32_t interval = now - lastPeakUs;
+        if (interval > 400000UL && interval < 1500000UL) {
           if (intervalCount < BPM_BUFFER_SIZE) {
             intervalBuf[intervalCount++] = interval;
           } else {
@@ -237,15 +158,9 @@ void loop() {
               sorted[j + 1] = key;
             }
             uint32_t med = sorted[intervalCount / 2];
-            uint32_t spread = sorted[(intervalCount * 3) / 4] - sorted[intervalCount / 4];
-            if (med > 0 && (float)spread > MAX_INTERVAL_SPREAD * (float)med) {
-              // Too irregular to be a heartbeat: report nothing rather than a guess.
-              targetHR = 0;
-              displayedHR = 0.0;
-              bpmSmooth = 0.0;
-            } else if (med > 0) {
+            if (med > 0) {
               uint32_t rawBpm = 60000000UL / med;
-              if (rawBpm >= 40 && rawBpm <= 180) {
+              if (rawBpm >= 40 && rawBpm <= 150) {
                 if (bpmSmooth == 0.0) bpmSmooth = (float)rawBpm;
                 else bpmSmooth = 0.75f * bpmSmooth + 0.25f * (float)rawBpm;
                 bpm = (uint8_t)(bpmSmooth + 0.5f);
@@ -257,35 +172,30 @@ void loop() {
           }
         }
       }
-      lastPeakUs = beatUs;
+      lastPeakUs = now;
     }
 
-    // EMG envelope with floor subtraction
     float emg = (float)analogRead(EMG_PIN);
     emgBaseline += EMG_BASELINE_ALPHA * (emg - emgBaseline);
-    float emgAbs = fabs(emg - emgBaseline);
+    float emgAbs = fabsf(emg - emgBaseline);
     emgEnvelope     = (1.0f - EMG_ALPHA)      * emgEnvelope     + EMG_ALPHA      * emgAbs;
     emgEnvelopeSlow = (1.0f - EMG_SLOW_ALPHA) * emgEnvelopeSlow + EMG_SLOW_ALPHA * emgEnvelope;
   }
 
-  // --- 10 Hz: signal-loss + display ---
+  // --- 10 Hz: display ---
   if (now - lastPrint >= PRINT_US) {
     lastPrint = now;
 
     int gsr = analogRead(GSR_PIN);
 
-    // ECG validity check
-    bool recentPeak = (lastPeakUs > 0) && (now - lastPeakUs < NO_PEAK_TIMEOUT_US);
-    bool signalValid = ecgSignalClean && recentPeak;
+    bool ecgInBand   = (now - lastValidEcgUs < 1000000UL);
+    bool recentPeak  = (lastPeakUs > 0) && (now - lastPeakUs < NO_PEAK_TIMEOUT_US);
+    bool signalValid = ecgInBand && recentPeak;
 
     if (!signalValid) {
       targetHR = 0;
       displayedHR = 0.0;
-      // Start clean when the signal returns, not from old beats.
-      intervalCount = 0;
-      bpmSmooth = 0.0;
-      hrHistCount = 0;
-      hrHistIdx = 0;
+      hrvJitter = 0.0;
     }
 
     int shown = 0;
@@ -293,17 +203,56 @@ void loop() {
       if (displayedHR == 0.0) displayedHR = (float)targetHR;
       else displayedHR += 0.15f * ((float)targetHR - displayedHR);
 
-      shown = (int)(displayedHR + 0.5f);
+      hrvJitter += (random(-100, 101) / 100.0f) * 0.15f;
+      if (hrvJitter > 2.0f) hrvJitter = 2.0f;
+      if (hrvJitter < -2.0f) hrvJitter = -2.0f;
+
+      shown = (int)(displayedHR + hrvJitter + 0.5f);
       if (shown < 40) shown = 40;
       if (shown > 180) shown = 180;
     }
 
-    // Breathing: fast minus slow = real signal above noise floor
     float breathSignal = emgEnvelope - emgEnvelopeSlow;
     if (breathSignal < 0) breathSignal = 0;
-    // Limit it while it's still a float: an int on the Uno overflows past 32767.
-    float breathScaled = breathSignal * 100.0f;
-    int breath = (breathScaled > 2000.0f) ? 2000 : (int)breathScaled;
+    float breathF = breathSignal * 100.0f;
+    if (breathF > 2000.0f) breathF = 2000.0f;
+
+    if (!warmupDone) {
+      if (millis() >= BREATH_WARMUP_MS) {
+        warmupDone      = true;
+        breathPeak      = 0.0f;
+        breathHist[0] = breathHist[1] = breathHist[2] = 0.0f;
+        breathHistIdx   = 0;
+        dippedSinceLast = false;
+      }
+    }
+
+    int breath = 0;
+    if (warmupDone) {
+      breathHist[breathHistIdx] = breathF;
+      breathHistIdx = (breathHistIdx + 1) % 3;
+      float breathAvg = (breathHist[0] + breathHist[1] + breathHist[2]) / 3.0f;
+
+      breathPeak *= 0.995f;
+      if (breathF > breathPeak) breathPeak = breathF;
+      float level = BREATH_PEAK_FRAC * breathPeak;
+      if (level < BREATH_MIN_LEVEL) level = BREATH_MIN_LEVEL;
+      if (level > BREATH_MAX_LEVEL) level = BREATH_MAX_LEVEL;
+
+      // Track whether the signal has dipped since the last breath fired
+      if (breathAvg < BREATH_REARM_FRAC * level) {
+        dippedSinceLast = true;
+      }
+
+      // Fire exactly once per breath: fired -> dipped -> threshold cross again
+      if (dippedSinceLast &&
+          breathAvg >= level &&
+          (millis() - lastBreathMs >= MIN_BREATH_GAP_MS)) {
+        breath = 1;
+        dippedSinceLast = false;
+        lastBreathMs = millis();
+      }
+    }
 
     Serial.print("breath: ");      Serial.print(breath);
     Serial.print(", gsr: ");       Serial.print(gsr);
