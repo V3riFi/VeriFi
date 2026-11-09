@@ -50,42 +50,34 @@ STRESS_FULL_SCALE_SD = 8.0  # TUNE on real data: GSR creeps up over a session
 ALERT_SD = 2.0
 STRESS_ALERT = round(ALERT_SD / STRESS_FULL_SCALE_SD * 100)
 
-# Breath hold: chest movement (flex range over HOLD_RANGE_S) below
-# HOLD_FRACTION of the baseline's typical range. The first NORMAL_PAUSE_S of a
-# hold is normal breathing; each second beyond counts as 1 SD in spike.
-HOLD_RANGE_S = 1.5
-HOLD_FRACTION = 0.3
-NORMAL_PAUSE_S = 1.0
+# Breathing arrives as inhale events (firmware 8791a0f): "flex" (the sketch's
+# "breath") is 1 on the sample where an inhale starts and 0 on every other one.
+# Breath hold = the longest gap between inhales that overlaps a question's
+# response window; each second beyond the person's normal gap (the median gap
+# in their baseline) counts as 1 SD in spike.
+BREATH_LOOKBACK_S = 15.0    # history kept before a question, to find the inhale that opened its gap
+MIN_BREATH_WINDOW_S = 15.0  # need this much history before reporting a breathing rate
 
 
-MIN_BREATH_WINDOW_S = 15.0  # need this much flex history before reporting a breathing rate
-MIN_BREATH_SWING = 2.0      # ADC units; smaller wiggles are noise, not breaths
+def inhale_times(t: np.ndarray, flex: np.ndarray) -> np.ndarray:
+    """Times of the samples where an inhale starts (flex is 1)."""
+    return t[~np.isnan(flex) & (flex >= 0.5)]
 
 
 def breath_rate(history: list[tuple[float, float]], window_s: float) -> float | None:
-    """Breaths per minute from (t, flex) pairs covering the last window_s seconds.
+    """Breaths per minute: inhales counted over the last window_s seconds of (t, flex) pairs.
 
-    Removes slow drift (the belt shifting), then counts upward crossings with a
-    dead band so noise doesn't count as breaths. None until there's enough data
-    or if fewer than 2 breaths were seen (e.g. a long hold).
+    Uses all the history while it is shorter than window_s, and None until it covers
+    MIN_BREATH_WINDOW_S. 0 means no inhale in the window (a long hold).
     """
-    if len(history) < 10 or history[-1][0] - history[0][0] < MIN_BREATH_WINDOW_S:
+    if not history:
         return None
-    t = np.array([h[0] for h in history])
-    x = np.array([h[1] for h in history])
-    x = x - np.polyval(np.polyfit(t - t[0], x, 1), t - t[0])
-    band = max(0.3 * float(x.std()), MIN_BREATH_SWING)
-    rises, state = [], None
-    for ti, xi in zip(t, x):
-        if xi > band and state != "high":
-            if state == "low":
-                rises.append(ti)
-            state = "high"
-        elif xi < -band:
-            state = "low"
-    if len(rises) < 2:
+    end = history[-1][0]
+    span = min(window_s, end - history[0][0])
+    if span < MIN_BREATH_WINDOW_S:
         return None
-    return round(float((len(rises) - 1) / (rises[-1] - rises[0]) * 60), 1)
+    count = sum(1 for t, x in history if t > end - span and x is not None and x >= 0.5)
+    return round(count / span * 60, 1)
 
 
 # Signals that are negative for real. For every other one, a negative value is a sensor's "no reading".
@@ -125,10 +117,9 @@ class Baseline:
         self.mean: dict[str, float] = {}
         self.std: dict[str, float] = {}
         self.add(samples, keys)
-        t = column(samples, "t")
-        ranges = rolling_range(t, column(samples, "flex"), HOLD_RANGE_S)
-        ranges = ranges[~np.isnan(ranges)]
-        self.breath_range = float(np.median(ranges)) if len(ranges) else None
+        gaps = np.diff(inhale_times(column(samples, "t"), column(samples, "flex")))
+        # This person's normal time between inhales (needs at least 3 inhales).
+        self.breath_gap = float(np.median(gaps)) if len(gaps) >= 2 else None
 
     def add(self, samples: list[dict], keys: tuple[str, ...], min_count: int = 2) -> int:
         """Adds (or replaces) these signals' mean and std from samples. Returns the fewest values any key had."""
@@ -209,23 +200,24 @@ def vocal_tension(sample: dict, baseline: Baseline) -> float | None:
 
 
 def longest_hold(t: np.ndarray, flex: np.ndarray, in_window: np.ndarray, baseline: Baseline) -> float | None:
-    """Longest stretch (seconds) inside the window where the chest barely moved."""
-    if baseline.breath_range is None or baseline.breath_range <= 0:
+    """Longest gap between inhales (seconds) that overlaps the window.
+
+    Gaps run from one inhale to the next. A gap still open at either end of the data
+    is measured to the first / last sample, so pass samples from BREATH_LOOKBACK_S
+    before the window. None without breathing data in the window, or without a
+    normal gap (baseline.breath_gap) to compare it with.
+    """
+    have = ~np.isnan(flex)
+    if baseline.breath_gap is None or not (have & in_window).any():
         return None
-    ranges = rolling_range(t, flex, HOLD_RANGE_S)
-    holding = (ranges < HOLD_FRACTION * baseline.breath_range) & in_window
-    if np.isnan(ranges[in_window]).all():
-        return None
-    longest, run_start = 0.0, None
-    for i in range(len(t)):
-        if holding[i]:
-            if run_start is None:
-                run_start = t[i]
-            longest = max(longest, t[i] - run_start)
-        else:
-            run_start = None
-    # A flat range at time t means no movement since t - HOLD_RANGE_S.
-    return longest + HOLD_RANGE_S if longest > 0 else 0.0
+    w0, w1 = t[in_window].min(), t[in_window].max()
+    th = t[have]
+    edges = np.concatenate([[th[0]], inhale_times(t, flex), [th[-1]]])
+    longest = 0.0
+    for a, b in zip(edges[:-1], edges[1:]):
+        if a < w1 and b > w0:
+            longest = max(longest, float(b - a))
+    return longest
 
 
 def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float | None, dict]:
@@ -259,6 +251,6 @@ def response(samples: list[dict], q_t: float, baseline: Baseline) -> tuple[float
 
     parts = {k: signals[k] for k in ("gsr", "hr") if k in signals}
     if hold is not None:
-        parts["breath_hold"] = max(0.0, hold - NORMAL_PAUSE_S)
+        parts["breath_hold"] = max(0.0, hold - baseline.breath_gap)
     spike = _weighted(parts, SPIKE_WEIGHTS)
     return (round(spike, 2) if spike is not None else None), signals
