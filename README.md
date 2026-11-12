@@ -57,6 +57,19 @@ The math, constants and message formats are in [docs/TECHNICAL.md](docs/TECHNICA
 
 ## Results
 
+### Live object test on people
+
+To test VeriFi on real people with a known right answer, we ran a Concealed Information Test. The subject secretly took one of 5 objects. The investigator then showed all 5, one at a time, and the subject answered "no" to every one, including the object they took.
+
+20 trials across 3 subjects, 100 answers in total (20 about the hidden object, 80 about the others):
+
+| Measure | Result | By chance |
+|---|---|---|
+| Hidden object got the strongest response of the 5 | **18 of 20 trials (90%)** | 4 of 20 (20%) |
+| Other objects wrongly flagged | **10 of 80 answers (12.5%)** | n/a |
+
+Signals reach the dashboard in under 1 second. This is a small pilot on 3 people, not a validated accuracy figure, but it's the first test of VeriFi against real ground truth.
+
 ### Simulated interview sessions
 
 To check that the scoring behaves as designed, we ran simulated sessions through VeriFi's real scoring code (`python -m backend.simulate`). Each session has the 60 s baseline, the 25 s voice baseline and 6 questions; one random question gets a stress reaction and the other five are calm. The signals have realistic noise: wandering heart rate, irregular breathing, noisy blinks and voice. 100 sessions per condition:
@@ -99,7 +112,7 @@ The CV team also built a reaction-time recognition test (`openCV/`, about 10 min
 ## Limitations and responsible use
 
 - **Stress is not lying.** An innocent person can react to an emotional or accusatory question, and a calm liar may not react at all. VeriFi flags moments to follow up on; it never gives a verdict.
-- **Not validated on people yet.** The scoring has been checked on simulated sessions and live sensor tests, not on a group of real subjects with known ground truth. The constants haven't been tuned on real sessions.
+- **Only a small live test so far.** VeriFi picked the hidden object in 18 of 20 trials, but that's 3 people. It needs a larger study before anyone relies on it, and the constants haven't been tuned on real sessions.
 - **Breath holds are weak.** In simulation, a single held breath was flagged only 5% of the time, because breathing is estimated from breath events smoothed over 30 s.
 - **No skin conductance.** Usually the strongest stress signal, but our sensor wasn't usable, so VeriFi relies on the remaining signals.
 - **Camera placement matters.** Blinks aren't counted while the head is turned more than 35° or tilted more than 25°, so the camera should sit at eye level, where the subject will be looking.
